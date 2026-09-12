@@ -791,7 +791,7 @@ run_video() {
         -filter_complex_threads 2 \
         -map "[final]" \
         -map 0:a? \
-        -r 24 \
+        -r 30 \
         -s 1280x720 \
         -c:v libx264 \
         -preset ultrafast \
