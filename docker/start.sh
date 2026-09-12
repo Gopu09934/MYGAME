@@ -722,7 +722,7 @@ run_bumper() {
     ffmpeg \
     -hide_banner \
     -loglevel warning \
-    -loop 1 -t "$BUMPER_DURATION" -i overlay.png \
+    -loop 1 -framerate 24 -t "$BUMPER_DURATION" -i overlay.png \
     -f lavfi -t "$BUMPER_DURATION" -i anullsrc=r=48000:cl=stereo \
     -filter_complex "$BFILTER" \
     -filter_complex_threads 2 \
@@ -794,7 +794,7 @@ run_video() {
         -reconnect_delay_max 5 \
         -re \
         -i "$url" \
-        -loop 1 -i "$ASSET_DIR/static_hud.png" \
+        -loop 1 -framerate 30 -i "$ASSET_DIR/static_hud.png" \
         -filter_complex "$filter" \
         -filter_complex_threads 2 \
         -map "[final]" \
