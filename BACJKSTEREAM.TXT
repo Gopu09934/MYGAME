@@ -1,1 +1,152 @@
 
+#!/bin/bash
+set -euo pipefail
+
+#############################################
+# Validate Environment Variables
+#############################################
+if [ -z "${VIDEO_URL:-}" ]; then
+    echo "ERROR: VIDEO_URL is not set"
+    exit 1
+fi
+if [ -z "${YOUTUBE_STREAM_KEY:-}" ]; then
+    echo "ERROR: YOUTUBE_STREAM_KEY is not set"
+    exit 1
+fi
+
+echo "========================================"
+echo "Starting 24/7 YouTube Stream (no overlay)"
+echo "Mode: stream copy — video/audio are pushed"
+echo "as-is, no scaling/filtering/re-encoding,"
+echo "so there is nothing for the CPU to do"
+echo "besides muxing. This removes the CPU-bound"
+echo "step entirely instead of trying to shrink"
+echo "it further on a shared/throttled runner."
+echo "========================================"
+
+MAX_RETRIES=5
+RETRY_DELAY=5
+
+#############################################
+# run_video: pushes one video to YouTube.
+#
+# Primary path: -c copy. No decode, no filter,
+# no encode — just remux the existing h264/aac
+# stream into FLV. There is no per-frame CPU
+# work left for a throttled runner to fall
+# behind on.
+#
+# Fallback: if a given source file can't be
+# copied as-is (not h264/aac, or its encoding
+# params aren't RTMP/FLV-compatible), ffmpeg
+# exits non-zero quickly and this retries once
+# with a plain re-encode (still no scaling or
+# overlay — just libx264 at the source's own
+# resolution) so a single odd file doesn't kill
+# the whole rotation.
+#############################################
+run_video() {
+    local url="$1"
+    local attempt=1
+
+    while [ "$attempt" -le "$MAX_RETRIES" ]; do
+        echo "----------------------------------------"
+        echo "Streaming (attempt ${attempt}/${MAX_RETRIES}, stream copy):"
+        echo "$url"
+        echo "----------------------------------------"
+
+        set +e
+        ffmpeg \
+        -hide_banner \
+        -loglevel info \
+        -reconnect 1 \
+        -reconnect_streamed 1 \
+        -reconnect_delay_max 5 \
+        -re \
+        -i "$url" \
+        -c copy \
+        -f flv \
+        "rtmp://a.rtmp.youtube.com/live2/${YOUTUBE_STREAM_KEY}"
+        local exit_code=$?
+        set -e
+
+        if [ "$exit_code" -eq 0 ]; then
+            echo "Video finished normally."
+            return 0
+        fi
+
+        echo "WARNING: stream copy failed (exit ${exit_code}). Retrying with re-encode fallback..."
+        set +e
+        ffmpeg \
+        -hide_banner \
+        -loglevel info \
+        -reconnect 1 \
+        -reconnect_streamed 1 \
+        -reconnect_delay_max 5 \
+        -re \
+        -i "$url" \
+        -c:v libx264 \
+        -preset ultrafast \
+        -tune zerolatency \
+        -pix_fmt yuv420p \
+        -b:v 3000k \
+        -maxrate 3000k \
+        -bufsize 6000k \
+        -g 60 \
+        -c:a aac \
+        -b:a 128k \
+        -ar 48000 \
+        -ac 2 \
+        -f flv \
+        "rtmp://a.rtmp.youtube.com/live2/${YOUTUBE_STREAM_KEY}"
+        exit_code=$?
+        set -e
+
+        if [ "$exit_code" -eq 0 ]; then
+            echo "Video finished normally (re-encode fallback)."
+            return 0
+        fi
+
+        echo "WARNING: ffmpeg exited with code ${exit_code} (attempt ${attempt}/${MAX_RETRIES})."
+        attempt=$((attempt + 1))
+        if [ "$attempt" -le "$MAX_RETRIES" ]; then
+            echo "Retrying in ${RETRY_DELAY}s..."
+            sleep "$RETRY_DELAY"
+        else
+            echo "ERROR: Max retries reached for this video. Moving on."
+        fi
+    done
+    return 1
+}
+
+#############################################
+# Stream loop
+#############################################
+IFS=',' read -ra RAW_URLS <<< "$VIDEO_URL"
+URLS=()
+for u in "${RAW_URLS[@]}"; do
+    u="${u#"${u%%[![:space:]]*}"}"
+    u="${u%"${u##*[![:space:]]}"}"
+    [ -n "$u" ] && URLS+=("$u")
+done
+NUM_URLS=${#URLS[@]}
+if [ "$NUM_URLS" -eq 0 ]; then
+    echo "ERROR: VIDEO_URL contained no valid entries after parsing"
+    exit 1
+fi
+
+if [ "$NUM_URLS" -gt 1 ]; then
+    mapfile -t URLS < <(printf '%s\n' "${URLS[@]}" | shuf)
+    echo "Shuffled playback order for this run:"
+    for u in "${URLS[@]}"; do
+        echo "  - $u"
+    done
+fi
+
+while true; do
+    for url in "${URLS[@]}"; do
+        run_video "$url"
+        echo "Loading next video..."
+        echo ""
+    done
+done
