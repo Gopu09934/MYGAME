@@ -1061,9 +1061,9 @@ while true; do
 
         run_video "$url"
 
-        if [ "$ENABLE_BUMPER" = true ]; then
-            run_bumper "$next_url"
-        fi
+        if [ "${ENABLE_BUMPER:-false}" = true ]; then
+    run_bumper "$next_url"
+fi
 
         echo "Loading next video..."
         echo ""
