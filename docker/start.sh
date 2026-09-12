@@ -315,18 +315,18 @@ ENABLE_BUMPER="${ENABLE_BUMPER:-false}"
 
 #############################################
 
-build_labels_chain: computes the optional
-coordinate/callout labels for a video. Now
-called from render_static_hud() (baked once
-per video) instead of the live per-frame
-chain — label positions and text never change
-mid-video, so there is no reason to recompute
-them 30 times a second.
-File format: <basename>.labels.txt, one label
-per line as "x,y,Label text".
-Sets globals: LABELS_CHAIN (filter string to
-append onto the canvas), LABELS_OUT (node to
-continue from — "[base]" if no labels file).
+#build_labels_chain: computes the optional
+#coordinate/callout labels for a video. Now
+#called from render_static_hud() (baked once
+#per video) instead of the live per-frame
+#chain — label positions and text never change
+#mid-video, so there is no reason to recompute
+#them 30 times a second.
+#File format: <basename>.labels.txt, one label
+#per line as "x,y,Label text".
+#Sets globals: LABELS_CHAIN (filter string to
+#append onto the canvas), LABELS_OUT (node to
+#continue from — "[base]" if no labels file).
 
 #############################################
 build_labels_chain() {
