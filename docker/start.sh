@@ -23,46 +23,32 @@ if [ -z "${YOUTUBE_API_KEY:-}" ] || [ -z "${YOUTUBE_CHANNEL_ID:-}" ]; then
 fi
 
 echo "========================================"
-echo "Starting 24/7 YouTube Stream (Documentary Overlay)"
+echo "Starting 24/7 YouTube Stream (Vice City Gaming Overlay)"
 echo "Output Resolution : 1280x720 (720p — sized for a 2-core CI runner)"
 echo "FPS               : 30"
 echo "========================================"
 
 FONT="font.ttf"
-# Premium NASA/documentary palette: deep space navy panel, a cooler
-# refined gold (less "orange", more brushed-metal), a muted signal red
-# for the LIVE indicator, and a cool silver-blue for secondary/technical
-# text (timestamps, labels, dividers) so the panel reads less like a
-# generic banner and more like a broadcast graphics package.
-GOLD="0xC9A227"
-GOLD_DIM="0x8C7220"
-RED="0xD64545"
-NAVY="0x0A0E16"
-SILVER="0x9FB3C8"
+# Miami Vice / GTA Vice City palette: deep purple-black night panel, a
+# hot neon pink/magenta as the primary accent (replaces the old gold),
+# a muted signal red for the LIVE indicator, and a bright neon
+# cyan/teal for secondary/technical text (timestamps, labels, dividers)
+# — the classic Vice City sunset-strip color pairing.
+GOLD="0xFF3FBF"       # neon pink/magenta — primary accent (was gold)
+GOLD_DIM="0xB82C88"    # dimmer pink for subtler accents
+RED="0xFF3B3B"         # LIVE dot / signal red
+NAVY="0x140021"        # deep purple-black panel background (was navy)
+SILVER="0x4DECEC"      # neon cyan — secondary/technical text (was silver)
 ASSET_DIR="panel_assets"
-INFO_FILE="galaxy_info.txt"
-SLOT=6            # seconds each headline is shown
-FACT_SLOT=8       # seconds each fun fact is shown
+INFO_FILE="vice_info.txt"   # headline pool — these now only feed the bottom ticker
 TICKER_SPEED=110  # pixels/second for the bottom ticker scroll
-CHANNEL_NAME="Technical Talk India"
+CHANNEL_NAME="Vice City Nights"
 SHADOW="shadowcolor=black@0.6:shadowx=1:shadowy=1"
-HEADLINE_FONTSIZE=21
-HEADLINE_LINE_SPACING=9
-HEADLINE_LINE_H=$((HEADLINE_FONTSIZE + HEADLINE_LINE_SPACING))
 
 # Don't show "N watching now" until the live viewer count reaches this
 # many — a very low number (e.g. "5 watching") reads worse to a new
 # visitor than showing nothing at all. Raise/lower to taste.
 VIEWER_MIN_TO_SHOW=10
-
-# Approximate center + radius (in 1280x720 output coordinates) of the
-# subscribe icon baked into overlay.png, used to draw a pulsing gold
-# ring around it every few seconds so it catches the eye. Adjust these
-# three numbers to match the icon's actual position in your overlay.png
-# — the defaults below are an estimate for the bottom-right corner.
-SUB_ICON_X=1249
-SUB_ICON_Y=677
-SUB_ICON_R=20
 
 # Real wall-clock start of the whole broadcast (not any single video).
 # Each video runs as its own ffmpeg process, so `t` resets to 0 every
@@ -96,28 +82,10 @@ BAR_CHARS=24       # width of the text-based vote bar, in characters
 POLLS_FILE="polls.txt"
 
 DEFAULT_POLLS=(
-    "Which target next?|Carina Nebula|Pillars of Creation"
-    "Favorite JWST image so far?|Southern Ring Nebula|Stephan's Quintet"
-    "What should we explore next?|Exoplanet atmospheres|Black hole jets"
-    "Which mission excites you more?|Euclid|Vera Rubin Observatory"
-)
-
-#############################################
-# Up-next bumper (shown between videos)
-#############################################
-ENABLE_BUMPER=true
-BUMPER_DURATION=5   # seconds
-BUMPER_MESSAGES=(
-    "Stay tuned as the James Webb Space Telescope reveals more of the Universe."
-    "A new window into the cosmos is coming up next."
-    "Journey deeper into space as Webb explores distant cosmic worlds."
-    "From ancient galaxies to stellar nurseries, more discoveries await."
-    "The Universe is still unfolding. Stay with us for the next view."
-    "See the cosmos in extraordinary detail through the eyes of Webb."
-    "Every new observation brings another piece of our cosmic story."
-    "Look deeper into space and further back in cosmic time."
-    "More distant galaxies, brilliant stars, and hidden cosmic structures are ahead."
-    "The next chapter of our journey through the Universe begins shortly."
+    "Favorite Vice City radio station?|Flash FM|Wave 103"
+    "Which ride next?|Cheetah|Infernus"
+    "Next mission type?|Story missions|Rampages and side jobs"
+    "Best Vice City character?|Tommy Vercetti|Lance Vance"
 )
 
 #############################################
@@ -131,15 +99,15 @@ mkdir -p "$ASSET_DIR"
 #############################################
 # Generate the coordinate-label marker dot once
 # at startup: a small transparent PNG with a
-# gold-filled center and white ring, matching
-# the panel's gold accent color. Used by
+# pink-filled center and white ring, matching
+# the panel's accent color. Used by
 # build_labels_chain() as ffmpeg input index 2.
 # Always generated (cheap, one frame, 20x20) —
 # harmless/unused by ffmpeg on videos that don't
 # have a matching .labels.txt file.
 #############################################
 DOT_MARKER="dot_marker.png"
-GOLD_R=201; GOLD_G=162; GOLD_B=39
+GOLD_R=255; GOLD_G=63; GOLD_B=191
 DOT_VF="format=rgba,geq=r=(if(lte(hypot(X-10\,Y-10)\,5)\,${GOLD_R}\,if(lte(hypot(X-10\,Y-10)\,8)\,255\,0))):g=(if(lte(hypot(X-10\,Y-10)\,5)\,${GOLD_G}\,if(lte(hypot(X-10\,Y-10)\,8)\,255\,0))):b=(if(lte(hypot(X-10\,Y-10)\,5)\,${GOLD_B}\,if(lte(hypot(X-10\,Y-10)\,8)\,255\,0))):a=(if(lte(hypot(X-10\,Y-10)\,8)\,255\,0))"
 ffmpeg -y -f lavfi -i "color=c=black@0.0:s=20x20" -vf "$DOT_VF" -frames:v 1 "$DOT_MARKER" -loglevel error
 if [ ! -s "$DOT_MARKER" ]; then
@@ -391,90 +359,36 @@ POLL_PID=""
 POLL_PID=$!
 
 #############################################
-# Static panel text (unchanged across videos)
+# Static overlay text (unchanged across videos)
+# — small HUD wordmark/tagline, not a sidebar
 #############################################
-printf 'J A M E S   W E B B'              > "$ASSET_DIR/title1.txt"
-printf 'S P A C E   T E L E S C O P E'    > "$ASSET_DIR/title2.txt"
-printf "T O D A Y ' S   D I S C O V E R Y" > "$ASSET_DIR/header.txt"
-printf 'DEEP SPACE REPORT'                > "$ASSET_DIR/eyebrow.txt"
-printf 'SUBSCRIBE for daily space discoveries' > "$ASSET_DIR/cta.txt"
-printf 'DID YOU KNOW' > "$ASSET_DIR/fact_label.txt"
+printf 'VICE CITY NIGHTS'                  > "$ASSET_DIR/title1.txt"
+printf '24/7 GAMEPLAY'                     > "$ASSET_DIR/eyebrow.txt"
+printf 'SUBSCRIBE for more Vice City chaos' > "$ASSET_DIR/cta.txt"
 
 #############################################
 # Default headline / fact pools (used as a
-# last resort if galaxy_info.txt / facts.txt
+# last resort if vice_info.txt / facts.txt
 # are missing or empty)
 #############################################
 DEFAULT_HEADLINES=(
-    "The James Webb Space Telescope continues revealing the Universe in extraordinary infrared detail."
-    "Webb is looking deeper into cosmic history, studying some of the earliest galaxies ever observed."
-    "Astronomers are using Webb to investigate the atmospheres and chemistry of distant exoplanets."
-    "Infrared observations are revealing stellar nurseries hidden behind dense clouds of cosmic dust."
-    "Webb is helping scientists investigate how the first galaxies formed and evolved after the Big Bang."
-    "Distant galaxies observed by Webb are giving astronomers new clues about the evolution of the cosmos."
-    "Webb observations are revealing complex chemistry in the regions where stars and planets are born."
-    "Young planetary systems are helping scientists understand how worlds form around distant stars."
-    "Webb continues studying protoplanetary disks where the building blocks of new planets are taking shape."
-    "Astronomers are using Webb to explore the environments surrounding supermassive black holes."
-    "The Euclid mission is mapping billions of galaxies to investigate the nature of dark matter and dark energy."
-    "The Vera C. Rubin Observatory is beginning a new era of wide-field astronomical observations of the Southern Sky."
-    "Gravitational-wave observatories are opening another window onto violent events across the Universe."
-    "Scientists are combining observations from Webb and other observatories to build a more complete picture of cosmic evolution."
-    "Every deep-space observation adds another piece to the story of how galaxies, stars, and planets came to exist."
+    "Tommy Vercetti is carving out territory across sun-soaked Vice City tonight."
+    "The streets of Vice City are heating up with turf wars and heists."
+    "Cruising the strip in a stolen Cheetah, neon lights streaking past."
+    "Another deal gone sideways down at the docks of Vice City."
+    "Starfish Island's mansions hide more secrets than they let on."
+    "Flash FM and Wave 103 keep the radio waves alive across the city."
+    "Weapons, cash, and turf — another night of Vice City business."
+    "The Vercetti Estate is quiet for now, but not for long."
+    "Rampages, side jobs, and mayhem fill tonight's Vice City run."
+    "From Ocean Beach to Downtown, no corner of Vice City stays calm for long."
+    "A new stash house has opened up somewhere in Little Havana."
+    "The Malibu Club lights are on — another deal is going down inside."
+    "Police heat is rising fast on the streets tonight."
+    "A fresh convoy of cash is rolling through Vice Point."
+    "Every mission tonight adds another chapter to Tommy's rise to power."
 )
 
-DEFAULT_FACTS=(
-    "The Universe is approximately 13.8 billion years old."
-    "A light-year is the distance light travels in one year, about 9.46 trillion kilometers."
-    "The James Webb Space Telescope observes the Universe primarily in infrared wavelengths."
-    "Webb can observe extremely distant galaxies whose light has traveled for more than 13 billion years."
-    "Webb studies the atmospheres of exoplanets by analyzing how their atmospheres interact with starlight."
-    "Infrared astronomy allows Webb to see through some clouds of cosmic dust that block visible light."
-    "Webb is studying how stars and planetary systems form inside clouds of gas and dust."
-    "Some early galaxies observed by Webb existed within the first few hundred million years of cosmic history."
-    "Astronomers use Webb to investigate how galaxies assembled and evolved over billions of years."
-    "The Milky Way contains hundreds of billions of stars."
-    "The observable Universe contains an enormous number of galaxies, each containing millions to trillions of stars."
-    "The Sun contains about 99.8 percent of the mass of the Solar System."
-    "Jupiter is the largest planet in our Solar System."
-    "Mars is home to Olympus Mons, the largest known volcano in the Solar System."
-    "Saturn's spectacular rings are made primarily of water-ice particles mixed with rock and dust."
-    "Venus is the hottest planet in the Solar System because of its powerful greenhouse effect."
-    "Mercury experiences extreme temperature differences between its day and night sides."
-    "Neptune has the fastest planetary winds measured in the Solar System, exceeding 2,000 kilometers per hour."
-    "Uranus rotates with an extreme axial tilt of about 98 degrees, making it appear to rotate on its side."
-    "Earth is currently the only planet known to naturally support life."
-    "The Moon is slowly moving away from Earth at an average rate of about 3.8 centimeters per year."
-    "The International Space Station orbits Earth at roughly 28,000 kilometers per hour."
-    "Neutron stars pack more mass than the Sun into a sphere only a few tens of kilometers across."
-    "A black hole's event horizon marks the boundary beyond which light cannot escape."
-    "At the center of the Milky Way lies a supermassive black hole called Sagittarius A*."
-    "Gravitational waves are ripples in spacetime produced by accelerating massive objects, including merging black holes."
-    "Dark matter does not emit or reflect light in a way we can directly detect, but its gravitational effects reveal its presence."
-    "Dark energy is the name given to the unknown component associated with the accelerating expansion of the Universe."
-    "The Milky Way and Andromeda galaxies are expected to interact and eventually merge over billions of years."
-    "A supernova is a powerful stellar explosion associated with the death of certain massive stars and other stellar events."
-    "The core of the Sun reaches temperatures of roughly 15 million degrees Celsius."
-    "Proxima Centauri is the closest known star to the Sun, at about 4.24 light-years away."
-    "Thousands of exoplanets have been confirmed beyond our Solar System."
-    "Exoplanets range from enormous gas giants to rocky worlds and planets with unusual atmospheric compositions."
-    "Galaxies are connected across the Universe by a vast cosmic web of filaments, walls, and enormous voids."
-    "Einstein's theory of relativity predicts that clocks run more slowly in stronger gravitational fields."
-    "Voyager 1 is the most distant human-made spacecraft from Earth."
-    "Voyager 1 crossed the heliopause and entered interstellar space in 2012."
-    "Earth's magnetic field helps shield the planet from charged particles carried by the solar wind."
-    "Auroras occur when energetic charged particles interact with gases in Earth's upper atmosphere."
-    "Webb has produced some of the deepest and most detailed infrared observations of the distant Universe."
-    "Webb is helping astronomers investigate how the earliest galaxies formed and evolved."
-    "Some early galaxies observed by Webb appear surprisingly bright and massive, providing important tests for galaxy-formation models."
-    "Star-forming nebulae contain enormous clouds of gas and dust where new stars can form."
-    "The asteroid belt between Mars and Jupiter contains millions of rocky bodies of different sizes."
-    "Comets are icy bodies that can develop bright comas and tails when heated by the Sun."
-    "Pulsars are rapidly rotating neutron stars that produce beams of electromagnetic radiation."
-    "The Event Horizon Telescope produced the first image of a black hole's shadow in 2019."
-    "In 2022, the Event Horizon Telescope revealed the first image of Sagittarius A*, the black hole at the center of our galaxy."
-    "The search for potentially habitable exoplanets is one of the major goals of modern astronomy."
-)
 
 #############################################
 # build_labels_chain: optional feature — draws
@@ -494,10 +408,10 @@ DEFAULT_FACTS=(
 # edges) are computed automatically.
 #
 # Visual style matches the rest of the panel:
-# gold-ring/white marker dot (uses the
-# pre-rendered dot_marker.png), gold-tinted
-# connector line, and a label box with a gold
-# accent bar + thin gold outline (same language
+# pink-ring/white marker dot (uses the
+# pre-rendered dot_marker.png), pink-tinted
+# connector line, and a label box with a pink
+# accent bar + thin pink outline (same language
 # as the CTA box).
 #
 # Notes/limits:
@@ -581,11 +495,12 @@ build_labels_chain() {
     local placed_x=() placed_y=() placed_w=()  # boxes already placed this video
     local k collision tries
 
-    # Split the pre-rendered marker image (input [2:v]) into one copy per
-    # label so each can be overlaid independently at its own coordinate.
+    # Split the pre-rendered marker image (input [1:v] — dot_marker.png
+    # is now input index 1, since overlay.png has been removed) into one
+    # copy per label so each can be overlaid independently.
     local split_outs=""
     for ((i = 1; i <= n; i++)); do split_outs+="[dm${i}]"; done
-    LABELS_CHAIN+="[2:v]split=${n}${split_outs};"
+    LABELS_CHAIN+="[1:v]split=${n}${split_outs};"
 
     local prev="base"
     for ((i = 0; i < n; i++)); do
@@ -662,15 +577,15 @@ build_labels_chain() {
 
         local n1="lbl${idx}_dot" n2="lbl${idx}_v" n3="lbl${idx}_h" n4="lbl${idx}_bg" n5="lbl${idx}_bar" n6="lbl${idx}_outline" n7="lbl${idx}_txt"
 
-        # Gold-tinted connector line (right-angle: vertical then horizontal)
+        # Pink-tinted connector line (right-angle: vertical then horizontal)
         LABELS_CHAIN+="[${prev}]drawbox=x=${x}:y=${seg_y_top}:w=2:h=${seg_h}:color=${GOLD}@0.85:t=fill[${n2}];"
         LABELS_CHAIN+="[${n2}]drawbox=x=${h_left}:y=${box_y}:w=${h_w}:h=2:color=${GOLD}@0.85:t=fill[${n3}];"
-        # Label box: dark fill + gold accent bar (left edge) + thin gold outline
+        # Label box: dark fill + pink accent bar (left edge) + thin pink outline
         LABELS_CHAIN+="[${n3}]drawbox=x=${box_x}:y=${box_y}:w=${box_w}:h=${BOX_H}:color=black@0.78:t=fill[${n4}];"
         LABELS_CHAIN+="[${n4}]drawbox=x=${box_x}:y=${box_y}:w=${ACCENT_W}:h=${BOX_H}:color=${GOLD}:t=fill[${n5}];"
         LABELS_CHAIN+="[${n5}]drawbox=x=${box_x}:y=${box_y}:w=${box_w}:h=${BOX_H}:color=${GOLD}@0.5:t=1[${n6}];"
         LABELS_CHAIN+="[${n6}]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/label${idx}.txt:fontcolor=white:fontsize=${LABEL_FONTSIZE}:x=$((box_x + ACCENT_W + LABEL_PAD_L)):y=$((box_y + (BOX_H - LABEL_FONTSIZE) / 2)):${SHADOW}[${n7}];"
-        # Circular gold-ring/white marker dot, overlaid on top of everything
+        # Circular pink-ring/white marker dot, overlaid on top of everything
         LABELS_CHAIN+="[${n7}][dm${idx}]overlay=x=$((x - 8)):y=$((y - 8))[${n1}];"
 
         prev="$n1"
@@ -681,27 +596,26 @@ build_labels_chain() {
 }
 
 #############################################
-# prepare_video_content: (re)loads headlines +
-# facts for the video about to stream, and
-# rebuilds BASE_CHAIN / FACT_END to match.
+# prepare_video_content: (re)loads the headline
+# pool for the video about to stream (these now
+# only feed the bottom ticker — there's no
+# sidebar left to display them in), and rebuilds
+# BASE_CHAIN / PANEL_END to match.
 #
 # Per-video override: if files named
 #   <basename>.headlines.txt
-#   <basename>.facts.txt
-#   <basename>.category.txt   (optional short chip label, e.g. "COMETS")
-#   <basename>.nofacts        (optional empty flag file — hides facts)
+#   <basename>.category.txt   (optional short chip label, e.g. "HEISTS")
 # exist (basename = video filename without
 # extension — same derivation used for the
 # up-next bumper title), they're used verbatim,
-# in the order given. Useful for curating panel
+# in the order given. Useful for curating ticker
 # content to match a specific video.
 #
 # Otherwise falls back to the shared pool
-# (galaxy_info.txt / facts.txt / built-in
-# defaults), shuffled into a fresh random order
-# each video so the panel doesn't feel like a
-# static banner repeating identically on every
-# clip.
+# (vice_info.txt / built-in defaults), shuffled
+# into a fresh random order each video so the
+# ticker doesn't feel like a static banner
+# repeating identically on every clip.
 #############################################
 prepare_video_content() {
     local url="$1"
@@ -726,10 +640,10 @@ prepare_video_content() {
     POLL_ENABLE="gte(mod(t+${VIDEO_START_OFFSET}\,${POLL_CYCLE})\,${poll_start})"
     INFO_ENABLE="lt(mod(t+${VIDEO_START_OFFSET}\,${POLL_CYCLE})\,${poll_start})"
 
-    # Optional category chip (e.g. "EXOPLANETS", "BLACK HOLES") shown
-    # next to the section header when a <basename>.category.txt file
-    # exists for this video. Purely additive — if the file is missing
-    # or empty, no chip is drawn at all.
+    # Optional category chip (e.g. "HEISTS", "STORY MISSION") shown
+    # next to the LIVE badge when a <basename>.category.txt file exists
+    # for this video. Purely additive — if the file is missing or
+    # empty, no chip is drawn at all.
     SHOW_CATEGORY=false
     if [ -f "${base}.category.txt" ]; then
         CATEGORY_TEXT="$(head -n1 "${base}.category.txt" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -737,17 +651,6 @@ prepare_video_content() {
             printf '%s' "$CATEGORY_TEXT" > "$ASSET_DIR/category.txt"
             SHOW_CATEGORY=true
         fi
-    fi
-
-    # Optional per-video flag to hide the "DID YOU KNOW" fact panel —
-    # useful for videos whose footage is already text-heavy (e.g. an
-    # infographic clip) where a second block of text would compete for
-    # attention rather than add to it. Create an empty file named
-    # <basename>.nofacts next to the video to suppress it.
-    SHOW_FACTS=true
-    if [ -f "${base}.nofacts" ]; then
-        SHOW_FACTS=false
-        echo "NOTICE: ${base}.nofacts present — hiding the fact panel for this video."
     fi
 
     # FIX: same reasoning as build_labels_chain() above — this function
@@ -779,49 +682,8 @@ prepare_video_content() {
         done < <(printf '%s\n' "${pool[@]}" | shuf)
     fi
 
-    FACTS=()
-    if [ -f "${base}.facts.txt" ]; then
-        echo "Using curated facts: ${base}.facts.txt"
-        while IFS= read -r line; do
-            [ -n "$(echo "$line" | tr -d '[:space:]')" ] && FACTS+=("$line")
-        done < "${base}.facts.txt"
-    fi
-    if [ "${#FACTS[@]}" -eq 0 ]; then
-        local fpool=()
-        if [ -f "facts.txt" ]; then
-            while IFS= read -r line; do
-                [ -n "$(echo "$line" | tr -d '[:space:]')" ] && fpool+=("$line")
-            done < "facts.txt"
-        fi
-        [ "${#fpool[@]}" -eq 0 ] && fpool=("${DEFAULT_FACTS[@]}")
-        while IFS= read -r line; do
-            FACTS+=("$line")
-        done < <(printf '%s\n' "${fpool[@]}" | shuf)
-    fi
-
     N=${#RAW_LINES[@]}
-    CYCLE=$((N * SLOT))
-    echo "This video: $N headline(s), rotation cycle ${CYCLE}s"
-
-    for i in "${!RAW_LINES[@]}"; do
-        idx=$((i + 1))
-        echo "${RAW_LINES[$i]}" | fold -s -w 25 > "$ASSET_DIR/headline${idx}.txt"
-    done
-
-    MAX_HEADLINE_LINES=1
-    for i in "${!RAW_LINES[@]}"; do
-        idx=$((i + 1))
-        lines=$(grep -c '' "$ASSET_DIR/headline${idx}.txt")
-        [ "$lines" -gt "$MAX_HEADLINE_LINES" ] && MAX_HEADLINE_LINES=$lines
-    done
-    echo "Longest headline wraps to $MAX_HEADLINE_LINES line(s)."
-
-    HEADLINE_Y=230
-    PROGRESS_Y=$((HEADLINE_Y + MAX_HEADLINE_LINES * HEADLINE_LINE_H + 40))
-    DOTS_Y=$((PROGRESS_Y + 20))
-    FACT_DIVIDER_Y=$((DOTS_Y + 40))
-    FACT_LABEL_Y=$((FACT_DIVIDER_Y + 14))
-    FACT_TEXT_Y=$((FACT_LABEL_Y + 20))
+    echo "This video: $N headline(s) feeding the bottom ticker"
 
     TICKER_STRING=""
     for i in "${!RAW_LINES[@]}"; do
@@ -829,209 +691,118 @@ prepare_video_content() {
     done
     printf '%s' "$TICKER_STRING" > "$ASSET_DIR/ticker.txt"
 
-    FACT_N=${#FACTS[@]}
-    FACT_CYCLE=$((FACT_N * FACT_SLOT))
-    for i in "${!FACTS[@]}"; do
-        idx=$((i + 1))
-        echo "${FACTS[$i]}" | fold -s -w 23 > "$ASSET_DIR/fact${idx}.txt"
-    done
-
     #########################################
     # Rebuild BASE_CHAIN for this video's content
     #########################################
-    # Gentle vignette on the raw footage gives the frame a cinematic,
-    # "shot on a documentary camera" depth instead of a flat, clinical
-    # rectangle — subtle enough not to darken the subject itself.
-    CHAIN="[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,vignette=PI/6[video];"
-    CHAIN+="[1:v]scale=1280:720:flags=fast_bilinear[ovl];"
-    CHAIN+="[ovl][video]overlay=0:0[base];"
+    # Gentle vignette on the raw footage gives the frame a cinematic
+    # broadcast depth instead of a flat, clinical rectangle — subtle
+    # enough not to darken the gameplay itself. (No overlay.png
+    # compositing step anymore — the scaled/padded gameplay frame IS
+    # the base plate the HUD draws on top of.)
+    CHAIN="[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,vignette=PI/6[base];"
 
     # Optional coordinate-based callout labels for this video, drawn onto
-    # the raw video before the panel/UI so the panel stays on top.
+    # the raw video before the HUD so the HUD stays on top.
     build_labels_chain "$url"
     CHAIN+="$LABELS_CHAIN"
 
-    # Panel drawn directly onto the video+labels plate. (A crossfade
-    # entrance animation was tried here — split into two copies and
-    # blend them in over 0.5s — but benchmarking showed `blend`'s
-    # per-pixel expression evaluation runs on every frame for the
-    # entire video, not just the fade window, and alone accounted for
-    # roughly 85-90% of total render time (measured: ~8x slower with it
-    # than without, on identical filter graphs). On a CPU-constrained
-    # 24/7 stream that's not a trade worth making for a cosmetic fade,
-    # so the panel now just appears directly, the same reliable/cheap
-    # way every other element in this script is drawn.
-    CHAIN+="${LABELS_OUT}drawbox=x=0:y=0:w=333:h=720:color=${NAVY}@0.82:t=fill[p1];"
-    CHAIN+="[p1]drawbox=x=333:y=0:w=4:h=720:color=${NAVY}@0.62:t=fill[p2];"
-    CHAIN+="[p2]drawbox=x=337:y=0:w=4:h=720:color=${NAVY}@0.42:t=fill[p3];"
-    CHAIN+="[p3]drawbox=x=341:y=0:w=4:h=720:color=${NAVY}@0.24:t=fill[p3b];"
-    CHAIN+="[p3b]drawbox=x=345:y=0:w=3:h=720:color=${NAVY}@0.10:t=fill[p4];"
-    CHAIN+="[p4]drawbox=x=0:y=0:w=348:h=3:color=${GOLD}@0.9:t=fill[p5];"
-    CHAIN+="[p5]drawbox=x=348:y=0:w=1:h=720:color=${GOLD}@0.45:t=fill[p6];"
-
-    # LIVE badge: a proper capsule plate (thin gold outline + dark fill)
-    # behind the pulsing dot and label, instead of the dot/text floating
-    # bare on the panel — reads like a real broadcast lower-third chip.
-    CHAIN+="[p6]drawbox=x=22:y=16:w=100:h=30:color=black@0.5:t=fill[p6a];"
-    CHAIN+="[p6a]drawbox=x=22:y=16:w=100:h=30:color=${GOLD}@0.55:t=1[p6b];"
-    CHAIN+="[p6b]drawbox=x=34:y=27:w=10:h=10:color=${RED}:t=fill:enable='lt(mod(t\,1)\,0.6)'[p7];"
-    CHAIN+="[p7]drawtext=fontfile=${FONT}:text='LIVE':fontcolor=white:fontsize=20:x=52:y=23[p8];"
-
-    CHAIN+="[p8]drawtext=fontfile=${FONT}:text='Credits\: NASA':fontcolor=${SILVER}@0.85:fontsize=14:x=313-text_w:y=19:${SHADOW}[p9];"
-    CHAIN+="[p9]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/clock.txt:reload=1:fontcolor=${GOLD}:fontsize=14:x=313-text_w:y=39:${SHADOW}[p10];"
-    CHAIN+="[p10]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/subs.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=313-text_w:y=57:${SHADOW}[p10b];"
-    CHAIN+="[p10b]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/viewers.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=313-text_w:y=75:${SHADOW}[p10c];"
-
-    # Kicker tag first (small gold tag with a left tick, documentary
-    # "series eyebrow" style), then the main title, then the section
-    # header directly above the rotating headline it belongs to — a
-    # clearer reading order than the old title->header->eyebrow stack.
-    CHAIN+="[p10c]drawbox=x=33:y=104:w=3:h=11:color=${GOLD}:t=fill[p10d];"
-    CHAIN+="[p10d]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/eyebrow.txt:fontcolor=${GOLD}:fontsize=12:x=45:y=104[p11a];"
-
-    CHAIN+="[p11a]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/title1.txt:fontcolor=white:fontsize=24:x=33:y=128:${SHADOW}[p11];"
-    CHAIN+="[p11]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/title2.txt:fontcolor=${SILVER}:fontsize=16:x=33:y=158:${SHADOW}[p12];"
-    CHAIN+="[p12]drawbox=x=33:y=186:w=280:h=1:color=${GOLD}@0.35:t=fill[p13];"
-
     #########################################
-    # POLL PANEL (a brief results reveal — the
-    # final POLL_WINDOW seconds of every
-    # POLL_CYCLE-second cycle)
+    # Minimal gaming-style HUD — no sidebar, the
+    # gameplay stays fully visible. Just small
+    # corner badges, a bottom ticker, and a
+    # subscribe/CTA capsule, like a real stream
+    # overlay rather than a documentary panel.
     #########################################
-    CHAIN+="[p13]drawbox=x=33:y=202:w=8:h=8:color=${RED}:t=fill:enable='${POLL_ENABLE}'[pv1];"
-    CHAIN+="[pv1]drawtext=fontfile=${FONT}:text='LIVE POLL':fontcolor=${GOLD}:fontsize=15:x=49:y=199:enable='${POLL_ENABLE}'[pv2];"
-    CHAIN+="[pv2]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_question.txt:reload=1:expansion=none:fontcolor=white:fontsize=19:line_spacing=8:x=33:y=228:enable='${POLL_ENABLE}':${SHADOW}[pv3];"
 
-    CHAIN+="[pv3]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_opt1.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=14:x=33:y=328:enable='${POLL_ENABLE}'[pv4];"
-    CHAIN+="[pv4]drawbox=x=33:y=350:w=280:h=16:color=black@0.35:t=fill:enable='${POLL_ENABLE}'[pv5];"
-    CHAIN+="[pv5]drawbox=x=33:y=350:w=280:h=16:color=${GOLD}@0.4:t=1:enable='${POLL_ENABLE}'[pv6];"
-    CHAIN+="[pv6]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar1.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=13:x=37:y=352:enable='${POLL_ENABLE}'[pv7];"
+    # LIVE badge, top-left: small capsule (pink outline + dark fill)
+    # behind the pulsing dot and label.
+    CHAIN+="${LABELS_OUT}drawbox=x=22:y=16:w=100:h=30:color=black@0.5:t=fill[h1];"
+    CHAIN+="[h1]drawbox=x=22:y=16:w=100:h=30:color=${GOLD}@0.55:t=1[h2];"
+    CHAIN+="[h2]drawbox=x=34:y=27:w=10:h=10:color=${RED}:t=fill:enable='lt(mod(t\,1)\,0.6)'[h3];"
+    CHAIN+="[h3]drawtext=fontfile=${FONT}:text='LIVE':fontcolor=white:fontsize=20:x=52:y=23[h4];"
 
-    CHAIN+="[pv7]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_opt2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=14:x=33:y=384:enable='${POLL_ENABLE}'[pv8];"
-    CHAIN+="[pv8]drawbox=x=33:y=406:w=280:h=16:color=black@0.35:t=fill:enable='${POLL_ENABLE}'[pv9];"
-    CHAIN+="[pv9]drawbox=x=33:y=406:w=280:h=16:color=${GOLD}@0.4:t=1:enable='${POLL_ENABLE}'[pv10];"
-    CHAIN+="[pv10]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=13:x=37:y=408:enable='${POLL_ENABLE}'[pv11];"
-
-    CHAIN+="[pv11]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_votes.txt:reload=1:expansion=none:fontcolor=${SILVER}@0.8:fontsize=11:x=33:y=440:enable='${POLL_ENABLE}':${SHADOW}[pv12];"
-
-    #########################################
-    # INFO PANEL (headlines/facts — the default,
-    # running for all but the final POLL_WINDOW
-    # seconds of each POLL_CYCLE)
-    #########################################
-    CHAIN+="[pv12]drawbox=x=33:y=202:w=8:h=8:color=${GOLD}:t=fill:enable='${INFO_ENABLE}'[p14];"
-    CHAIN+="[p14]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/header.txt:fontcolor=${GOLD}:fontsize=15:x=49:y=199:enable='${INFO_ENABLE}'[p16];"
-
-    local prev="p16"
+    local prev="h4"
     if [ "$SHOW_CATEGORY" = true ]; then
         local cat_w=$(( ${#CATEGORY_TEXT} * 8 + 24 ))
         [ "$cat_w" -lt 70 ] && cat_w=70
         [ "$cat_w" -gt 160 ] && cat_w=160
-        local cat_x=$((313 - cat_w))
-        # Aligned with the short kicker row (y=104), not the wide
-        # letter-spaced "TODAY'S DISCOVERY" header row below it, which
-        # runs edge-to-edge and would collide with a right-aligned chip.
-        CHAIN+="[${prev}]drawbox=x=${cat_x}:y=100:w=${cat_w}:h=20:color=${NAVY}@0.9:t=fill[catbg];"
-        CHAIN+="[catbg]drawbox=x=${cat_x}:y=100:w=${cat_w}:h=20:color=${GOLD}@0.6:t=1[catout];"
-        CHAIN+="[catout]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/category.txt:fontcolor=${GOLD}:fontsize=11:x=$((cat_x + 10)):y=106[catxt];"
+        CHAIN+="[${prev}]drawbox=x=132:y=16:w=${cat_w}:h=30:color=${NAVY}@0.85:t=fill[catbg];"
+        CHAIN+="[catbg]drawbox=x=132:y=16:w=${cat_w}:h=30:color=${GOLD}@0.5:t=1[catout];"
+        CHAIN+="[catout]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/category.txt:fontcolor=${GOLD}:fontsize=13:x=$((132 + 12)):y=27[catxt];"
         prev="catxt"
     fi
-    for i in "${!RAW_LINES[@]}"; do
-        idx=$((i + 1))
-        local start=$((i * SLOT))
-        local end=$((start + SLOT))
-        local nxt="h${idx}"
-        local ALPHA="if(between(mod(t\,${CYCLE})\,${start}\,${end})\,if(lt(mod(t\,${CYCLE})-${start}\,0.6)\,(mod(t\,${CYCLE})-${start})/0.6\,if(gt(mod(t\,${CYCLE})-${start}\,${SLOT}-0.6)\,(${end}-mod(t\,${CYCLE}))/0.6\,1))\,0)"
-        CHAIN+="[${prev}]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/headline${idx}.txt:fontcolor=white:fontsize=${HEADLINE_FONTSIZE}:line_spacing=${HEADLINE_LINE_SPACING}:x=33:y=${HEADLINE_Y}:alpha='${ALPHA}':enable='${INFO_ENABLE}':${SHADOW}[${nxt}];"
-        prev="$nxt"
-    done
 
-    CHAIN+="[${prev}]drawtext=fontfile=${FONT}:text='STORY ${CURRENT_INDEX} OF ${TOTAL_VIDEOS}':fontcolor=${SILVER}@0.8:fontsize=10:x=33:y=$((PROGRESS_Y - 16)):enable='${INFO_ENABLE}':${SHADOW}[pgcap];"
-    CHAIN+="[pgcap]drawbox=x=33:y=${PROGRESS_Y}:w=280:h=2:color=${SILVER}@0.35:t=fill:enable='${INFO_ENABLE}'[pg1];"
-    CHAIN+="[pg1]drawbox=x=33:y=${PROGRESS_Y}:w='280*(mod(t\,${SLOT}))/${SLOT}':h=2:color=${GOLD}:t=fill:enable='${INFO_ENABLE}'[pg2];"
-    prev="pg2"
+    # Small wordmark + tagline, tucked under the LIVE badge — a logo
+    # corner, not a wall of text.
+    CHAIN+="[${prev}]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/title1.txt:fontcolor=white:fontsize=20:x=22:y=58:${SHADOW}[h5];"
+    CHAIN+="[h5]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/eyebrow.txt:fontcolor=${GOLD}:fontsize=12:x=22:y=82:${SHADOW}[h6];"
 
-    for i in "${!RAW_LINES[@]}"; do
-        idx=$((i + 1))
-        local x=$((33 + i * 17))
-        local nxt="db${idx}"
-        CHAIN+="[${prev}]drawbox=x=${x}:y=${DOTS_Y}:w=7:h=7:color=white@0.3:t=fill:enable='${INFO_ENABLE}'[${nxt}];"
-        prev="$nxt"
-    done
+    # Stats stack, top-right corner: credits / clock / subs / viewers,
+    # right-aligned against the full 1280px frame (no panel edge to
+    # align against anymore).
+    CHAIN+="[h6]drawtext=fontfile=${FONT}:text='Credits\: Rockstar Games':fontcolor=${SILVER}@0.85:fontsize=14:x=1260-text_w:y=19:${SHADOW}[h7];"
+    CHAIN+="[h7]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/clock.txt:reload=1:fontcolor=${GOLD}:fontsize=14:x=1260-text_w:y=39:${SHADOW}[h8];"
+    CHAIN+="[h8]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/subs.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=1260-text_w:y=57:${SHADOW}[h9];"
+    CHAIN+="[h9]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/viewers.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=1260-text_w:y=75:${SHADOW}[h10];"
 
-    local last=$((N - 1))
-    for i in "${!RAW_LINES[@]}"; do
-        idx=$((i + 1))
-        local x=$((33 + i * 17))
-        local start=$((i * SLOT))
-        local end=$((start + SLOT))
-        local ENABLE="${INFO_ENABLE}*between(mod(t\,${CYCLE})\,${start}\,${end})"
-        if [ "$i" -eq "$last" ]; then
-            CHAIN+="[${prev}]drawbox=x=${x}:y=${DOTS_Y}:w=7:h=7:color=${GOLD}:t=fill:enable='${ENABLE}'[pdotend];"
-            prev="pdotend"
-        else
-            local nxt="da${idx}"
-            CHAIN+="[${prev}]drawbox=x=${x}:y=${DOTS_Y}:w=7:h=7:color=${GOLD}:t=fill:enable='${ENABLE}'[${nxt}];"
-            prev="$nxt"
-        fi
-    done
+    #########################################
+    # LIVE POLL — small corner card, top-right,
+    # below the stats stack. Only visible for the
+    # final POLL_WINDOW seconds of every
+    # POLL_CYCLE-second cycle (a brief "results
+    # reveal"). Nothing is drawn here the rest of
+    # the time — this replaces the old full-height
+    # sidebar poll panel with a compact widget that
+    # doesn't block the gameplay.
+    #########################################
+    local PX=956 PW=284
+    CHAIN+="[h10]drawbox=x=${PX}:y=104:w=${PW}:h=8:color=${RED}:t=fill:enable='${POLL_ENABLE}'[pv1];"
+    CHAIN+="[pv1]drawtext=fontfile=${FONT}:text='LIVE POLL':fontcolor=${GOLD}:fontsize=14:x=$((PX + 16)):y=101:enable='${POLL_ENABLE}'[pv2];"
+    CHAIN+="[pv2]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_question.txt:reload=1:expansion=none:fontcolor=white:fontsize=16:line_spacing=6:x=${PX}:y=128:enable='${POLL_ENABLE}':${SHADOW}[pv3];"
 
-    if [ "$SHOW_FACTS" = true ]; then
-        CHAIN+="[${prev}]drawbox=x=33:y=${FACT_DIVIDER_Y}:w=280:h=2:color=${GOLD}@0.4:t=fill:enable='${INFO_ENABLE}'[fp1];"
-        CHAIN+="[fp1]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/fact_label.txt:fontcolor=${GOLD}@0.85:fontsize=12:x=33:y=${FACT_LABEL_Y}:enable='${INFO_ENABLE}'[fp2];"
-        prev="fp2"
-        for i in "${!FACTS[@]}"; do
-            idx=$((i + 1))
-            local start=$((i * FACT_SLOT))
-            local end=$((start + FACT_SLOT))
-            local nxt="f${idx}"
-            local FALPHA="if(between(mod(t\,${FACT_CYCLE})\,${start}\,${end})\,if(lt(mod(t\,${FACT_CYCLE})-${start}\,0.6)\,(mod(t\,${FACT_CYCLE})-${start})/0.6\,if(gt(mod(t\,${FACT_CYCLE})-${start}\,${FACT_SLOT}-0.6)\,(${end}-mod(t\,${FACT_CYCLE}))/0.6\,1))\,0)"
-            CHAIN+="[${prev}]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/fact${idx}.txt:fontcolor=white@0.9:fontsize=16:line_spacing=7:x=33:y=${FACT_TEXT_Y}:alpha='${FALPHA}':enable='${INFO_ENABLE}'[${nxt}];"
-            prev="$nxt"
-        done
-    fi
+    CHAIN+="[pv3]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_opt1.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=13:x=${PX}:y=210:enable='${POLL_ENABLE}'[pv4];"
+    CHAIN+="[pv4]drawbox=x=${PX}:y=230:w=${PW}:h=14:color=black@0.35:t=fill:enable='${POLL_ENABLE}'[pv5];"
+    CHAIN+="[pv5]drawbox=x=${PX}:y=230:w=${PW}:h=14:color=${GOLD}@0.4:t=1:enable='${POLL_ENABLE}'[pv6];"
+    CHAIN+="[pv6]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar1.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=12:x=$((PX + 4)):y=231:enable='${POLL_ENABLE}'[pv7];"
+
+    CHAIN+="[pv7]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_opt2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=13:x=${PX}:y=258:enable='${POLL_ENABLE}'[pv8];"
+    CHAIN+="[pv8]drawbox=x=${PX}:y=278:w=${PW}:h=14:color=black@0.35:t=fill:enable='${POLL_ENABLE}'[pv9];"
+    CHAIN+="[pv9]drawbox=x=${PX}:y=278:w=${PW}:h=14:color=${GOLD}@0.4:t=1:enable='${POLL_ENABLE}'[pv10];"
+    CHAIN+="[pv10]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=12:x=$((PX + 4)):y=279:enable='${POLL_ENABLE}'[pv11];"
+
+    CHAIN+="[pv11]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_votes.txt:reload=1:expansion=none:fontcolor=${SILVER}@0.8:fontsize=10:x=${PX}:y=306:enable='${POLL_ENABLE}':${SHADOW}[pv12];"
 
     BASE_CHAIN="$CHAIN"
-    FACT_END="$prev"
+    PANEL_END="pv12"
 }
 
 #############################################
-# build_final_filter: appends the CTA / next-
-# video countdown / ticker / watermark / border
-# section onto BASE_CHAIN. Called fresh for each
-# video since the countdown depends on that
-# video's probed duration.
+# build_final_filter: appends the CTA / ticker /
+# watermark / border section onto BASE_CHAIN.
 #############################################
 build_final_filter() {
-    local total_duration="$1"
     local tail="$BASE_CHAIN"
 
+    # Periodic subscribe reminder capsule: pops in for CTA_SHOW seconds
+    # every CTA_CYCLE seconds, then disappears completely (no next-video
+    # countdown or "coming up next" text — there's no bumper anymore, so
+    # there's nothing to count down to). The whole capsule — background
+    # included — is gated on CTA_ENABLE so it isn't sitting on screen
+    # for the other 232 of every 240 seconds.
     local CTA_CYCLE=240
     local CTA_SHOW=8
     local CTA_ALPHA="if(between(mod(t\,${CTA_CYCLE})\,0\,${CTA_SHOW})\,if(lt(mod(t\,${CTA_CYCLE})\,0.6)\,mod(t\,${CTA_CYCLE})/0.6\,if(gt(mod(t\,${CTA_CYCLE})\,${CTA_SHOW}-0.6)\,(${CTA_SHOW}-mod(t\,${CTA_CYCLE}))/0.6\,1))\,0)"
     local CTA_ENABLE="between(mod(t\,${CTA_CYCLE})\,0\,${CTA_SHOW})"
-    local COUNTDOWN_ENABLE="not(${CTA_ENABLE})"
 
-    # CTA capsule: soft outer glow (a slightly larger, dimmer gold box
-    # behind the plate) plus a navy fill and a thin outline, reading
-    # like a premium broadcast lower-third instead of a flat rectangle.
-    tail+="[${FACT_END}]drawbox=x=729:y=616:w=515:h=51:color=${GOLD}@0.12:t=fill[cta_glow];"
-    tail+="[cta_glow]drawbox=x=733:y=620:w=507:h=43:color=${NAVY}@0.85:t=fill[cta_bg];"
-    tail+="[cta_bg]drawbox=x=733:y=620:w=507:h=43:color=${GOLD}@0.4:t=1[cta_outline];"
-    tail+="[cta_outline]drawbox=x=733:y=620:w=4:h=43:color=${GOLD}:t=fill[cta_bar];"
+    tail+="[${PANEL_END}]drawbox=x=729:y=616:w=515:h=51:color=${GOLD}@0.12:t=fill:enable='${CTA_ENABLE}'[cta_glow];"
+    tail+="[cta_glow]drawbox=x=733:y=620:w=507:h=43:color=${NAVY}@0.85:t=fill:enable='${CTA_ENABLE}'[cta_bg];"
+    tail+="[cta_bg]drawbox=x=733:y=620:w=507:h=43:color=${GOLD}@0.4:t=1:enable='${CTA_ENABLE}'[cta_outline];"
+    tail+="[cta_outline]drawbox=x=733:y=620:w=4:h=43:color=${GOLD}:t=fill:enable='${CTA_ENABLE}'[cta_bar];"
     tail+="[cta_bar]drawbox=x=755:y=636:w=11:h=11:color=${RED}:t=fill:enable='${CTA_ENABLE}'[cta_dot];"
-    tail+="[cta_dot]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/cta.txt:fontcolor=white:fontsize=19:x=773:y=633:alpha='${CTA_ALPHA}'[cta_sub];"
+    tail+="[cta_dot]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/cta.txt:fontcolor=white:fontsize=19:x=773:y=633:alpha='${CTA_ALPHA}'[cta_final];"
 
-    if [[ "$total_duration" =~ ^[0-9]+$ ]] && [ "$total_duration" -gt 0 ]; then
-        tail+="[cta_sub]drawtext=fontfile=${FONT}:text='Next video in %{eif\:max(${total_duration}-t\,0)\:d}s':fontcolor=white:fontsize=19:x=773:y=633:enable='${COUNTDOWN_ENABLE}'[cta_final];"
-    else
-        tail+="[cta_sub]drawtext=fontfile=${FONT}:text='Coming up next...':fontcolor=white@0.85:fontsize=19:x=773:y=633:enable='${COUNTDOWN_ENABLE}'[cta_final];"
-    fi
-
-    # Bottom ticker: layered navy plate (two steps for a soft top edge)
-    # with a slim gold hairline, and a refined "ON AIR" tag replacing the
-    # old flat gold BULLETIN block — same function, a cleaner broadcast
-    # aesthetic.
+    # Bottom ticker: layered dark-purple plate (two steps for a soft top
+    # edge) with a slim pink hairline, and a refined "ON AIR" tag.
     tail+="[cta_final]drawbox=x=0:y=678:w=1280:h=2:color=${GOLD}@0.35:t=fill[tk0];"
     tail+="[tk0]drawbox=x=0:y=680:w=1280:h=40:color=${NAVY}@0.80:t=fill[tk1];"
     tail+="[tk1]drawbox=x=0:y=680:w=1280:h=2:color=${GOLD}@0.9:t=fill[tk2];"
@@ -1042,24 +813,15 @@ build_final_filter() {
     tail+="[tk5]drawbox=x=17:y=690:w=8:h=8:color=${RED}:t=fill:enable='lt(mod(t\,1)\,0.6)'[tk5b];"
     tail+="[tk5b]drawtext=fontfile=${FONT}:text='ON AIR':fontcolor=${GOLD}:fontsize=15:x=33:y=693[tk6];"
 
-    tail+="[tk6]drawtext=fontfile=${FONT}:text='${CHANNEL_NAME}':fontcolor=${SILVER}@0.5:fontsize=15:borderw=1.5:bordercolor=black@0.7:x=353:y=655[wm1];"
+    tail+="[tk6]drawtext=fontfile=${FONT}:text='${CHANNEL_NAME}':fontcolor=${SILVER}@0.5:fontsize=15:borderw=1.5:bordercolor=black@0.7:x=353:y=655[cf0];"
 
-    # Pulsing ring around the subscribe icon (baked into overlay.png at
-    # SUB_ICON_X/SUB_ICON_Y) — visible for 1s out of every 3s, so it
-    # catches the eye without being a constant distraction.
-    local SUB_PULSE_ENABLE="lt(mod(t\,3)\,1)"
-    local sub_ring_x=$((SUB_ICON_X - SUB_ICON_R))
-    local sub_ring_y=$((SUB_ICON_Y - SUB_ICON_R))
-    local sub_ring_d=$((SUB_ICON_R * 2))
-    tail+="[wm1]drawbox=x=${sub_ring_x}:y=${sub_ring_y}:w=${sub_ring_d}:h=${sub_ring_d}:color=${GOLD}@0.9:t=3:enable='${SUB_PULSE_ENABLE}'[wm2];"
-
-    # Broadcast-style corner frame brackets (thin gold L-marks inset from
-    # each edge) — a classic documentary/mission-control framing touch
-    # that reads as intentional composition rather than a raw video feed.
+    # Broadcast-style corner frame brackets (thin pink L-marks inset from
+    # each edge) — a classic "mission control" framing touch that reads
+    # as intentional composition rather than a raw video feed.
     local CL=34   # bracket arm length
     local CI=16   # inset from the frame edge
     local CT=2    # bracket line thickness
-    tail+="[wm2]drawbox=x=${CI}:y=${CI}:w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf1];"
+    tail+="[cf0]drawbox=x=${CI}:y=${CI}:w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf1];"
     tail+="[cf1]drawbox=x=${CI}:y=${CI}:w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf2];"
     tail+="[cf2]drawbox=x=$((1280 - CI - CL)):y=${CI}:w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf3];"
     tail+="[cf3]drawbox=x=$((1280 - CI - CT)):y=${CI}:w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf4];"
@@ -1068,7 +830,7 @@ build_final_filter() {
     tail+="[cf6]drawbox=x=$((1280 - CI - CL)):y=$((720 - CI - CT)):w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf7];"
     tail+="[cf7]drawbox=x=$((1280 - CI - CT)):y=$((720 - CI - CL)):w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf8];"
 
-    # Sealed-frame finish: a hairline gold border reinforces the
+    # Sealed-frame finish: a hairline pink border reinforces the
     # broadcast-package feel; the flat black vignette box is gone now
     # that the actual footage carries a real vignette filter.
     tail+="[cf8]drawbox=x=0:y=0:w=1280:h=720:color=${GOLD}@0.25:t=1[final]"
@@ -1090,7 +852,7 @@ run_bumper() {
     raw="${raw//[-_]/ }"
     raw="$(echo "$raw" | tr -d '[:space:]')"
     if [ -z "$raw" ] || [ ${#raw} -lt 3 ]; then
-        title="A New Discovery"
+        title="Vice City Business"
     else
         raw="${next_url##*/}"
         raw="${raw%.*}"
