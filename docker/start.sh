@@ -3,7 +3,7 @@ set -euo pipefail
 
 #############################################
 
-Validate Environment Variables
+#Validate Environment Variables
 
 #############################################
 if [ -z "${VIDEO_URL:-}" ]; then
