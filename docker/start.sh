@@ -15,9 +15,9 @@ echo "ERROR: YOUTUBE_STREAM_KEY is not set"
 exit 1
 fi
 
-Subscriber count + live viewer count are optional — if the API creds
-aren't provided, those panel elements just stay blank instead of
-failing the whole stream.
+#Subscriber count + live viewer count are optional — if the API creds
+#aren't provided, those panel elements just stay blank instead of
+#failing the whole stream.
 
 SHOW_STATS=true
 if [ -z "${YOUTUBE_API_KEY:-}" ] || [ -z "${YOUTUBE_CHANNEL_ID:-}" ]; then
@@ -68,8 +68,8 @@ mkdir -p "$ASSET_DIR"
 
 #############################################
 
-Coordinate-label marker dot (used only when
-baking the static HUD — see render_static_hud).
+#Coordinate-label marker dot (used only when
+#baking the static HUD — see render_static_hud).
 
 #############################################
 DOT_MARKER="dot_marker.png"
@@ -83,7 +83,7 @@ fi
 
 #############################################
 
-Background clock writer
+#Background clock writer
 
 #############################################
 date -u +'%d %b %Y • %H:%M:%S UTC' > "$ASSET_DIR/clock.txt"
@@ -98,7 +98,7 @@ CLOCK_PID=$!
 
 #############################################
 
-Background subscriber-count writer
+#Background subscriber-count writer
 
 #############################################
 printf ' ' > "$ASSET_DIR/subs.txt"
@@ -127,7 +127,7 @@ fi
 
 #############################################
 
-Background live-viewer-count writer
+#Background live-viewer-count writer
 
 #############################################
 printf ' ' > "$ASSET_DIR/viewers.txt"
@@ -169,7 +169,7 @@ trap 'kill "$CLOCK_PID" 2>/dev/null || true; [ -n "$SUBS_PID" ] && kill "$SUBS_P
 
 #############################################
 
-Background poll writer
+#Background poll writer
 
 #############################################
 mkdir -p "$ASSET_DIR"
@@ -280,7 +280,7 @@ POLL_PID=$!
 
 #############################################
 
-Static overlay text
+#Static overlay text
 
 #############################################
 printf 'VICE CITY NIGHTS' > "$ASSET_DIR/title1.txt"
@@ -566,14 +566,15 @@ ffmpeg -y \
 
 #############################################
 
-build_dynamic_chain: everything that must be
-recomputed every frame because it depends on
-t, live-reloaded text files, or a visibility
-window. This is composited on top of the
-baked static_hud.png (input index 1 in
-run_video's ffmpeg call).
+#build_dynamic_chain: everything that must be
+#recomputed every frame because it depends on
+#t, live-reloaded text files, or a visibility
+#window. This is composited on top of the
+#baked static_hud.png (input index 1 in
+#run_video's ffmpeg call).
 
 #############################################
+
 build_dynamic_chain() {
 local poll_start=$((POLL_CYCLE - POLL_WINDOW))
 POLL_ENABLE="gte(mod(t+${VIDEO_START_OFFSET},${POLL_CYCLE}),${poll_start})"
@@ -696,7 +697,7 @@ build_dynamic_chain
 
 #############################################
 
-Up-next bumper — unchanged.
+#Up-next bumper — unchanged.
 
 #############################################
 run_bumper() {
