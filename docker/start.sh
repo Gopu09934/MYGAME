@@ -33,7 +33,7 @@ echo "========================================"
 
 FONT="font.ttf"
 
-Miami Vice / GTA Vice City palette.
+#Miami Vice / GTA Vice City palette.
 
 GOLD="0xFF3FBF" # neon pink/magenta — primary accent
 GOLD_DIM="0xB82C88" # dimmer pink for subtler accents
