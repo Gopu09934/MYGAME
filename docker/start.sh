@@ -29,56 +29,24 @@ echo "FPS               : 30"
 echo "========================================"
 
 FONT="font.ttf"
-# Miami Vice / GTA Vice City palette: deep purple-black night panel, a
-# hot neon pink/magenta as the primary accent (replaces the old gold),
-# a muted signal red for the LIVE indicator, and a bright neon
-# cyan/teal for secondary/technical text (timestamps, labels, dividers)
-# — the classic Vice City sunset-strip color pairing.
-GOLD="0xFF3FBF"       # neon pink/magenta — primary accent (was gold)
+# Miami Vice / GTA Vice City palette.
+GOLD="0xFF3FBF"        # neon pink/magenta — primary accent
 GOLD_DIM="0xB82C88"    # dimmer pink for subtler accents
 RED="0xFF3B3B"         # LIVE dot / signal red
-NAVY="0x140021"        # deep purple-black panel background (was navy)
-SILVER="0x4DECEC"      # neon cyan — secondary/technical text (was silver)
+NAVY="0x140021"        # deep purple-black panel background
+SILVER="0x4DECEC"      # neon cyan — secondary/technical text
 ASSET_DIR="panel_assets"
-INFO_FILE="vice_info.txt"   # headline pool — these now only feed the bottom ticker
-TICKER_SPEED=110  # pixels/second for the bottom ticker scroll
+INFO_FILE="vice_info.txt"
+TICKER_SPEED=110
 CHANNEL_NAME="Vice City Nights"
 SHADOW="shadowcolor=black@0.6:shadowx=1:shadowy=1"
 
-# Don't show "N watching now" until the live viewer count reaches this
-# many — a very low number (e.g. "5 watching") reads worse to a new
-# visitor than showing nothing at all. Raise/lower to taste.
 VIEWER_MIN_TO_SHOW=10
-
-# Real wall-clock start of the whole broadcast (not any single video).
-# Each video runs as its own ffmpeg process, so `t` resets to 0 every
-# time — anything that needs to stay in sync across video boundaries
-# (like the poll/info panel switch below) has to add this offset back
-# in rather than relying on `t` alone. See VIDEO_START_OFFSET in
-# run_video().
 STREAM_START_EPOCH=$(date +%s)
 
-#############################################
-# Live audience poll (alternates with the info
-# panel below): minutes 0-5 of every 10-minute
-# cycle show a poll question with live vote-bar
-# percentages; minutes 5-10 show the regular
-# headline/fact info panel. Votes are tallied
-# from the YouTube live chat (`!vote 1` /
-# `!vote 2`) by the background poller further
-# down. Falls back gracefully with 0% bars if
-# API creds aren't configured — the question
-# still rotates either way.
-#############################################
-POLL_CYCLE=300     # a new poll question every 5 min
-POLL_WINDOW=45     # poll panel is only visible for the final 45s of
-                    # each cycle (a "reveal" moment) — the info panel
-                    # runs the rest of the time, and votes cast via
-                    # chat during that stretch are what the reveal
-                    # shows. Voting itself isn't gated by visibility:
-                    # `!vote 1`/`!vote 2` count for the whole 5-minute
-                    # window even while the info panel is on screen.
-BAR_CHARS=24       # width of the text-based vote bar, in characters
+POLL_CYCLE=300
+POLL_WINDOW=45
+BAR_CHARS=24
 POLLS_FILE="polls.txt"
 
 DEFAULT_POLLS=(
@@ -88,42 +56,26 @@ DEFAULT_POLLS=(
     "Best Vice City character?|Tommy Vercetti|Lance Vance"
 )
 
-#############################################
-# Auto-restart on failure
-#############################################
-MAX_RETRIES=5       # per-video retry attempts before moving on
-RETRY_DELAY=5        # seconds between retries
+MAX_RETRIES=5
+RETRY_DELAY=5
 
 mkdir -p "$ASSET_DIR"
 
 #############################################
-# Generate the coordinate-label marker dot once
-# at startup: a small transparent PNG with a
-# pink-filled center and white ring, matching
-# the panel's accent color. Used by
-# build_labels_chain() as ffmpeg input index 2.
-# Always generated (cheap, one frame, 20x20) —
-# harmless/unused by ffmpeg on videos that don't
-# have a matching .labels.txt file.
+# Coordinate-label marker dot (used only when
+# baking the static HUD — see render_static_hud).
 #############################################
 DOT_MARKER="dot_marker.png"
 GOLD_R=255; GOLD_G=63; GOLD_B=191
 DOT_VF="format=rgba,geq=r=(if(lte(hypot(X-10\,Y-10)\,5)\,${GOLD_R}\,if(lte(hypot(X-10\,Y-10)\,8)\,255\,0))):g=(if(lte(hypot(X-10\,Y-10)\,5)\,${GOLD_G}\,if(lte(hypot(X-10\,Y-10)\,8)\,255\,0))):b=(if(lte(hypot(X-10\,Y-10)\,5)\,${GOLD_B}\,if(lte(hypot(X-10\,Y-10)\,8)\,255\,0))):a=(if(lte(hypot(X-10\,Y-10)\,8)\,255\,0))"
 ffmpeg -y -f lavfi -i "color=c=black@0.0:s=20x20" -vf "$DOT_VF" -frames:v 1 "$DOT_MARKER" -loglevel error
 if [ ! -s "$DOT_MARKER" ]; then
-    # Guarantee the file always exists and is a valid PNG, even in the
-    # unlikely case the geq-based generation above fails — this is what
-    # gets passed to ffmpeg as a real input on every stream start, so it
-    # must never be missing. Falls back to an invisible 1x1 transparent
-    # pixel (labels would render without a visible dot, but the stream
-    # itself keeps running instead of crashing on a missing input file).
     echo "WARNING: geq-based marker generation failed — using a blank 1x1 fallback."
     echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" | base64 -d > "$DOT_MARKER"
 fi
 
 #############################################
-# Background clock writer (avoids fragile
-# drawtext %{gmtime} expansion syntax)
+# Background clock writer
 #############################################
 date -u +'%d %b %Y  •  %H:%M:%S UTC' > "$ASSET_DIR/clock.txt"
 (
@@ -137,9 +89,6 @@ CLOCK_PID=$!
 
 #############################################
 # Background subscriber-count writer
-# (polls YouTube Data API every 60s — subs
-# don't change second to second, and this
-# respects API quota)
 #############################################
 printf ' ' > "$ASSET_DIR/subs.txt"
 SUBS_PID=""
@@ -150,18 +99,11 @@ if [ "$SHOW_STATS" = true ]; then
             RESP=$(curl -s "https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${YOUTUBE_CHANNEL_ID}&key=${YOUTUBE_API_KEY}" || true)
             COUNT=$(echo "$RESP" | grep -o '"subscriberCount"[^"]*"[0-9]*"' | grep -oE '[0-9]+')
             if [ -n "$COUNT" ]; then
-                # Manual comma insertion — locale-independent, so it works
-                # the same regardless of the container's default locale
-                # (printf "%'d" silently fails to group digits under the
-                # bare "C" locale that Ubuntu containers ship with).
                 FORMATTED=$(echo "$COUNT" | rev | sed 's/\(...\)/\1,/g' | rev | sed 's/^,//')
                 printf '%s subscribers' "$FORMATTED" > "$ASSET_DIR/subs.txt.tmp"
                 mv -f "$ASSET_DIR/subs.txt.tmp" "$ASSET_DIR/subs.txt"
                 WARNED_ONCE=false
             elif [ "$WARNED_ONCE" = false ]; then
-                # Log the raw response once so it shows up in the Actions
-                # log — this tells us exactly why the count isn't parsing
-                # (bad channel ID, disabled API, quota, key restrictions, etc.)
                 echo "WARNING: could not parse subscriberCount from API response. Raw response:"
                 echo "$RESP"
                 WARNED_ONCE=true
@@ -174,12 +116,6 @@ fi
 
 #############################################
 # Background live-viewer-count writer
-# Strategy: find the channel's currently-live
-# video once (search.list — costs more quota,
-# so only called when we don't already have an
-# id), then poll videos.list (cheap, 1 unit)
-# every 30s for concurrentViewers. If the
-# broadcast ends/restarts, re-search.
 #############################################
 printf ' ' > "$ASSET_DIR/viewers.txt"
 VIEWERS_PID=""
@@ -202,12 +138,9 @@ if [ "$SHOW_STATS" = true ]; then
                     printf '%s watching now' "$VIEWERS" > "$ASSET_DIR/viewers.txt.tmp"
                     mv -f "$ASSET_DIR/viewers.txt.tmp" "$ASSET_DIR/viewers.txt"
                 elif [ -n "$VIEWERS" ]; then
-                    # Below the display threshold — keep the panel blank
-                    # rather than showing a small/discouraging number.
                     printf ' ' > "$ASSET_DIR/viewers.txt.tmp"
                     mv -f "$ASSET_DIR/viewers.txt.tmp" "$ASSET_DIR/viewers.txt"
                 else
-                    # Broadcast ended or hasn't registered yet — clear and re-search.
                     LIVE_VIDEO_ID=""
                     printf ' ' > "$ASSET_DIR/viewers.txt"
                     rm -f "$ASSET_DIR/live_video_id.txt"
@@ -222,31 +155,7 @@ fi
 trap 'kill "$CLOCK_PID" 2>/dev/null || true; [ -n "$SUBS_PID" ] && kill "$SUBS_PID" 2>/dev/null || true; [ -n "$VIEWERS_PID" ] && kill "$VIEWERS_PID" 2>/dev/null || true; [ -n "$POLL_PID" ] && kill "$POLL_PID" 2>/dev/null || true' EXIT
 
 #############################################
-# Background poll writer: rotates the question
-# every POLL_CYCLE seconds on wall-clock time
-# (independent of which video is currently
-# playing) and, when API creds are available,
-# tallies `!vote 1` / `!vote 2` chat messages
-# into live percentage bars.
-#
-# The question/option rotation always runs (no
-# API needed for that part); only the chat
-# lookup itself is gated behind SHOW_STATS, so
-# without credentials the poll panel still shows
-# a rotating question with bars parked at 0%
-# instead of disappearing entirely.
-#
-# Vote bars are rendered as plain text (a string
-# of '#' and '.' characters via drawtext, same
-# reload=1 technique as clock.txt/subs.txt)
-# rather than a dynamically-sized drawbox,
-# because ffmpeg's filter graph has no way to
-# feed a live external number into another
-# filter's numeric parameters each frame short
-# of an expensive per-pixel filter — and we
-# already paid for that mistake once with the
-# panel-entrance blend filter. Text is cheap and
-# reload=1 already proven reliable here.
+# Background poll writer
 #############################################
 mkdir -p "$ASSET_DIR"
 printf ' ' > "$ASSET_DIR/poll_question.txt"
@@ -267,8 +176,6 @@ POLL_PID=""
     [ "${#POLLS[@]}" -eq 0 ] && POLLS=("${DEFAULT_POLLS[@]}")
     NUM_POLLS=${#POLLS[@]}
 
-    # Prints a BAR_CHARS-wide bar of '#' (filled) / '.' (empty) for a
-    # given 0-100 percentage.
     render_bar() {
         local pct="$1" filled empty
         filled=$(( (pct * BAR_CHARS + 50) / 100 ))
@@ -292,7 +199,6 @@ POLL_PID=""
         WINDOW_IDX=$(( (ELAPSED / POLL_CYCLE) % NUM_POLLS ))
 
         if [ "$WINDOW_IDX" -ne "$LAST_WINDOW_IDX" ]; then
-            # New 10-minute cycle — new question, reset the tally.
             LAST_WINDOW_IDX=$WINDOW_IDX
             VOTES1=0
             VOTES2=0
@@ -323,8 +229,6 @@ POLL_PID=""
                 CRESP=$(curl -s "$CHAT_URL" || true)
 
                 if [ -z "$CRESP" ] || ! echo "$CRESP" | grep -q '"pollingIntervalMillis"'; then
-                    # Chat lookup failed (broadcast/chat ended, bad id,
-                    # etc.) — clear and let the next loop re-resolve it.
                     LIVE_CHAT_ID=""
                     NEXT_PAGE_TOKEN=""
                 else
@@ -359,18 +263,12 @@ POLL_PID=""
 POLL_PID=$!
 
 #############################################
-# Static overlay text (unchanged across videos)
-# — small HUD wordmark/tagline, not a sidebar
+# Static overlay text
 #############################################
 printf 'VICE CITY NIGHTS'                  > "$ASSET_DIR/title1.txt"
 printf '24/7 GAMEPLAY'                     > "$ASSET_DIR/eyebrow.txt"
 printf 'SUBSCRIBE for more Vice City chaos' > "$ASSET_DIR/cta.txt"
 
-#############################################
-# Default headline / fact pools (used as a
-# last resort if vice_info.txt / facts.txt
-# are missing or empty)
-#############################################
 DEFAULT_HEADLINES=(
     "Tommy Vercetti is carving out territory across sun-soaked Vice City tonight."
     "The streets of Vice City are heating up with turf wars and heists."
@@ -389,52 +287,29 @@ DEFAULT_HEADLINES=(
     "Every mission tonight adds another chapter to Tommy's rise to power."
 )
 
+BUMPER_MESSAGES=(
+    "Stay tuned — more Vice City chaos incoming."
+    "Grab a drink, the next run starts in a moment."
+    "Vice City never sleeps. Neither do we."
+)
+BUMPER_DURATION=6
+ENABLE_BUMPER="${ENABLE_BUMPER:-false}"
 
 #############################################
-# build_labels_chain: optional feature — draws
-# pointer/callout labels onto specific
-# coordinates in the video, similar to
-# hand-annotated documentary footage. Fully
-# optional per video: only activates if a file
-# named <basename>.labels.txt exists.
+# build_labels_chain: computes the optional
+# coordinate/callout labels for a video. Now
+# called from render_static_hud() (baked once
+# per video) instead of the live per-frame
+# chain — label positions and text never change
+# mid-video, so there is no reason to recompute
+# them 30 times a second.
 #
-# File format — one label per line, comma
-# separated:
-#   x,y,Label text here
-# where x,y is the pixel position on the
-# 1280x720 output frame that the label should
-# point at. Box placement, connector line, and
-# edge-avoidance (flips below/left near frame
-# edges) are computed automatically.
-#
-# Visual style matches the rest of the panel:
-# pink-ring/white marker dot (uses the
-# pre-rendered dot_marker.png), pink-tinted
-# connector line, and a label box with a pink
-# accent bar + thin pink outline (same language
-# as the CTA box).
-#
-# Notes/limits:
-#  - Keep label text under ~28 characters — the
-#    box is a fixed width and does not
-#    reflow/resize to fit longer text.
-#  - Best used for points with x > ~370 so
-#    labels don't collide with the left info
-#    panel.
-#  - The connector is a right-angle line
-#    (vertical then horizontal), not a true
-#    diagonal — ffmpeg has no native diagonal
-#    line primitive without much heavier
-#    filters, so this is the practical choice.
-#  - Requires dot_marker.png (generated once at
-#    startup) to be wired in as ffmpeg input
-#    index 2 — see run_video()'s -i list.
+# File format: <basename>.labels.txt, one label
+# per line as "x,y,Label text".
 #
 # Sets globals: LABELS_CHAIN (filter string to
-# append), LABELS_OUT (bracketed output label
-# to continue the chain from, e.g. "[base]" if
-# no labels file exists, or the last label's
-# output node otherwise).
+# append onto the canvas), LABELS_OUT (node to
+# continue from — "[base]" if no labels file).
 #############################################
 build_labels_chain() {
     local url="$1"
@@ -442,15 +317,11 @@ build_labels_chain() {
     base="${url##*/}"
     base="${base%.*}"
 
-    # FIX: without `local`, every bare loop variable assigned in this
-    # function (i, idx, and the C-style `for ((i=...))` counters below)
-    # is a GLOBAL bash variable. The main stream loop at the bottom of
-    # this file also uses a bare `i` (`for ((i = 0; i < NUM_URLS; i++))`),
-    # and this function runs (via prepare_video_content -> run_video)
-    # once per video inside that loop. Any unscoped `i`/`idx` in here
-    # silently overwrites the outer loop's counter, which is what caused
-    # the stream to get stuck replaying the first video forever instead
-    # of advancing through the whole playlist.
+    # `local` is required here: this function is called once per video
+    # from inside the outer stream loop, which also uses a bare `i` as
+    # its own counter. Any unscoped i/idx below would silently clobber
+    # that outer loop variable and get the stream stuck replaying the
+    # first video forever.
     local i idx
 
     LABELS_CHAIN=""
@@ -461,8 +332,6 @@ build_labels_chain() {
         return 0
     fi
 
-    # First pass: collect valid lines so we know the count up front
-    # (needed to size the marker `split` filter correctly).
     local xs=() ys=() texts=()
     while IFS=',' read -r x y text; do
         x="$(echo "$x" | tr -d '[:space:]')"
@@ -485,19 +354,18 @@ build_labels_chain() {
     local V_OFFSET=70
     local H_OFFSET=40
     local ACCENT_W=4
-    local BOX_GAP=10          # minimum clear space required between two label boxes
+    local BOX_GAP=10
     local LABEL_FONTSIZE=18
-    local LABEL_PAD_L=14      # gap between accent bar and text start
-    local LABEL_PAD_R=16      # gap between text end and box's right edge
-    local AVG_CHAR_W=10       # rough proportional-font width estimate at fontsize 18
-    local BOX_W_MIN=110       # never smaller than this, even for a 1-word label
-    local BOX_W_MAX=260       # never bigger than this, even for a long label
-    local placed_x=() placed_y=() placed_w=()  # boxes already placed this video
+    local LABEL_PAD_L=14
+    local LABEL_PAD_R=16
+    local AVG_CHAR_W=10
+    local BOX_W_MIN=110
+    local BOX_W_MAX=260
+    local placed_x=() placed_y=() placed_w=()
     local k collision tries
 
-    # Split the pre-rendered marker image (input [1:v] — dot_marker.png
-    # is now input index 1, since overlay.png has been removed) into one
-    # copy per label so each can be overlaid independently.
+    # dot_marker.png is input index 1 in the render_static_hud() call
+    # that invokes this function — see that function for the -i list.
     local split_outs=""
     for ((i = 1; i <= n; i++)); do split_outs+="[dm${i}]"; done
     LABELS_CHAIN+="[1:v]split=${n}${split_outs};"
@@ -508,9 +376,6 @@ build_labels_chain() {
         local x="${xs[$i]}" y="${ys[$i]}" text="${texts[$i]}"
         printf '%s' "$text" > "$ASSET_DIR/label${idx}.txt"
 
-        # Auto-size the box to the label's text instead of using one
-        # fixed width for every label — "Pulsar Wind" no longer gets the
-        # same wide box as a much longer phrase.
         local box_w=$(( ${#text} * AVG_CHAR_W + ACCENT_W + LABEL_PAD_L + LABEL_PAD_R ))
         [ "$box_w" -lt "$BOX_W_MIN" ] && box_w=$BOX_W_MIN
         [ "$box_w" -gt "$BOX_W_MAX" ] && box_w=$BOX_W_MAX
@@ -525,11 +390,6 @@ build_labels_chain() {
         fi
         [ "$box_x" -lt 0 ] && box_x=10
 
-        # Collision avoidance: if this box overlaps (within BOX_GAP of)
-        # any box already placed for an earlier label on this video,
-        # push it downward in BOX_H+BOX_GAP steps until it's clear, so
-        # two nearby coordinate labels never end up crowding each other
-        # like "Glowing gas knot" / "Dust cloud region" did before.
         tries=0
         while :; do
             collision=false
@@ -545,9 +405,6 @@ build_labels_chain() {
             done
             [ "$collision" = false ] && break
             box_y=$((box_y + BOX_H + BOX_GAP))
-            # Ran off the bottom of the frame — wrap back to the top and
-            # keep nudging; after a handful of tries just accept overlap
-            # rather than loop forever (extremely dense label sets only).
             if [ $((box_y + BOX_H)) -gt 700 ]; then
                 box_y=20
             fi
@@ -577,15 +434,12 @@ build_labels_chain() {
 
         local n1="lbl${idx}_dot" n2="lbl${idx}_v" n3="lbl${idx}_h" n4="lbl${idx}_bg" n5="lbl${idx}_bar" n6="lbl${idx}_outline" n7="lbl${idx}_txt"
 
-        # Pink-tinted connector line (right-angle: vertical then horizontal)
         LABELS_CHAIN+="[${prev}]drawbox=x=${x}:y=${seg_y_top}:w=2:h=${seg_h}:color=${GOLD}@0.85:t=fill[${n2}];"
         LABELS_CHAIN+="[${n2}]drawbox=x=${h_left}:y=${box_y}:w=${h_w}:h=2:color=${GOLD}@0.85:t=fill[${n3}];"
-        # Label box: dark fill + pink accent bar (left edge) + thin pink outline
         LABELS_CHAIN+="[${n3}]drawbox=x=${box_x}:y=${box_y}:w=${box_w}:h=${BOX_H}:color=black@0.78:t=fill[${n4}];"
         LABELS_CHAIN+="[${n4}]drawbox=x=${box_x}:y=${box_y}:w=${ACCENT_W}:h=${BOX_H}:color=${GOLD}:t=fill[${n5}];"
         LABELS_CHAIN+="[${n5}]drawbox=x=${box_x}:y=${box_y}:w=${box_w}:h=${BOX_H}:color=${GOLD}@0.5:t=1[${n6}];"
         LABELS_CHAIN+="[${n6}]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/label${idx}.txt:fontcolor=white:fontsize=${LABEL_FONTSIZE}:x=$((box_x + ACCENT_W + LABEL_PAD_L)):y=$((box_y + (BOX_H - LABEL_FONTSIZE) / 2)):${SHADOW}[${n7}];"
-        # Circular pink-ring/white marker dot, overlaid on top of everything
         LABELS_CHAIN+="[${n7}][dm${idx}]overlay=x=$((x - 8)):y=$((y - 8))[${n1}];"
 
         prev="$n1"
@@ -596,26 +450,168 @@ build_labels_chain() {
 }
 
 #############################################
-# prepare_video_content: (re)loads the headline
-# pool for the video about to stream (these now
-# only feed the bottom ticker — there's no
-# sidebar left to display them in), and rebuilds
-# BASE_CHAIN / PANEL_END to match.
+# render_static_hud: bakes every frame-invariant
+# HUD element for the given video into one RGBA
+# PNG, rendered once per video instead of being
+# redrawn on every output frame.
 #
-# Per-video override: if files named
-#   <basename>.headlines.txt
-#   <basename>.category.txt   (optional short chip label, e.g. "HEISTS")
-# exist (basename = video filename without
-# extension — same derivation used for the
-# up-next bumper title), they're used verbatim,
-# in the order given. Useful for curating ticker
-# content to match a specific video.
+# This is the fix for the sub-realtime encode
+# speed (observed ~0.3x / ~10fps against a 30fps
+# target): the old per-frame filter_complex chain
+# ran ~55 drawbox/drawtext ops on the full
+# 1280x720 frame every single frame, which a
+# 2-core runner cannot sustain at 30fps. Nearly
+# all of those ops (labels, LIVE badge shell,
+# category chip, wordmark, credits text, corner
+# brackets, sealed border, ticker plate, ON AIR
+# label, channel name) never change mid-video, so
+# baking them once collapses the live per-frame
+# chain down to only the handful of things that
+# actually animate (blinking dots, live text
+# files, the poll reveal window, the ticker
+# scroll, and the CTA fade).
 #
-# Otherwise falls back to the shared pool
-# (vice_info.txt / built-in defaults), shuffled
-# into a fresh random order each video so the
-# ticker doesn't feel like a static banner
-# repeating identically on every clip.
+# Sets: writes $ASSET_DIR/static_hud.png
+#############################################
+render_static_hud() {
+    local url="$1"
+
+    build_labels_chain "$url"
+
+    local CHAIN="[0:v]format=rgba[base];"
+    CHAIN+="$LABELS_CHAIN"
+
+    # LIVE badge shell (the blinking red dot itself is drawn live, on
+    # top of this, every frame — see the dynamic chain below).
+    CHAIN+="${LABELS_OUT}drawbox=x=22:y=16:w=100:h=30:color=black@0.5:t=fill[h1];"
+    CHAIN+="[h1]drawbox=x=22:y=16:w=100:h=30:color=${GOLD}@0.55:t=1[h2];"
+    CHAIN+="[h2]drawtext=fontfile=${FONT}:text='LIVE':fontcolor=white:fontsize=20:x=52:y=23[h4];"
+
+    local prev="h4"
+    if [ "$SHOW_CATEGORY" = true ]; then
+        local cat_w=$(( ${#CATEGORY_TEXT} * 8 + 24 ))
+        [ "$cat_w" -lt 70 ] && cat_w=70
+        [ "$cat_w" -gt 160 ] && cat_w=160
+        CHAIN+="[${prev}]drawbox=x=132:y=16:w=${cat_w}:h=30:color=${NAVY}@0.85:t=fill[catbg];"
+        CHAIN+="[catbg]drawbox=x=132:y=16:w=${cat_w}:h=30:color=${GOLD}@0.5:t=1[catout];"
+        CHAIN+="[catout]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/category.txt:fontcolor=${GOLD}:fontsize=13:x=$((132 + 12)):y=27[catxt];"
+        prev="catxt"
+    fi
+
+    CHAIN+="[${prev}]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/title1.txt:fontcolor=white:fontsize=20:x=22:y=58:${SHADOW}[h5];"
+    CHAIN+="[h5]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/eyebrow.txt:fontcolor=${GOLD}:fontsize=12:x=22:y=82:${SHADOW}[h6];"
+    CHAIN+="[h6]drawtext=fontfile=${FONT}:text='Credits\: Rockstar Games':fontcolor=${SILVER}@0.85:fontsize=14:x=1260-text_w:y=19:${SHADOW}[h7];"
+
+    # CTA box shell — background/outline/bar only. Visibility toggles
+    # via enable=CTA_ENABLE, and the text fades via alpha=, both of
+    # which have to stay in the live chain since they depend on `t`.
+    # The shell itself is drawn here unconditionally, sitting invisible
+    # under nothing when the CTA is "off" is not an option — so the
+    # shell keeps its own enable gate too and lives in the dynamic
+    # chain instead. (See build_dynamic_chain.)
+
+    # Bottom ticker plate + left "ON AIR" tab shell (dot blink and
+    # channel-name/scroll text stay dynamic).
+    CHAIN+="[h7]drawbox=x=0:y=678:w=1280:h=2:color=${GOLD}@0.35:t=fill[tk0];"
+    CHAIN+="[tk0]drawbox=x=0:y=680:w=1280:h=40:color=${NAVY}@0.80:t=fill[tk1];"
+    CHAIN+="[tk1]drawbox=x=0:y=680:w=1280:h=2:color=${GOLD}@0.9:t=fill[tk2];"
+    CHAIN+="[tk2]drawbox=x=0:y=680:w=124:h=40:color=${NAVY}@0.95:t=fill[tk4];"
+    CHAIN+="[tk4]drawbox=x=0:y=682:w=117:h=1:color=${GOLD}@0.7:t=fill[tk4b];"
+    CHAIN+="[tk4b]drawbox=x=113:y=682:w=2:h=36:color=${GOLD}@0.5:t=fill[tk5];"
+    CHAIN+="[tk5]drawtext=fontfile=${FONT}:text='ON AIR':fontcolor=${GOLD}:fontsize=15:x=33:y=693[tk6];"
+    CHAIN+="[tk6]drawtext=fontfile=${FONT}:text='${CHANNEL_NAME}':fontcolor=${SILVER}@0.5:fontsize=15:borderw=1.5:bordercolor=black@0.7:x=353:y=655[cf0];"
+
+    local CL=34
+    local CI=16
+    local CT=2
+    CHAIN+="[cf0]drawbox=x=${CI}:y=${CI}:w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf1];"
+    CHAIN+="[cf1]drawbox=x=${CI}:y=${CI}:w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf2];"
+    CHAIN+="[cf2]drawbox=x=$((1280 - CI - CL)):y=${CI}:w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf3];"
+    CHAIN+="[cf3]drawbox=x=$((1280 - CI - CT)):y=${CI}:w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf4];"
+    CHAIN+="[cf4]drawbox=x=${CI}:y=$((720 - CI - CT)):w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf5];"
+    CHAIN+="[cf5]drawbox=x=${CI}:y=$((720 - CI - CL)):w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf6];"
+    CHAIN+="[cf6]drawbox=x=$((1280 - CI - CL)):y=$((720 - CI - CT)):w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf7];"
+    CHAIN+="[cf7]drawbox=x=$((1280 - CI - CT)):y=$((720 - CI - CL)):w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf8];"
+    CHAIN+="[cf8]drawbox=x=0:y=0:w=1280:h=720:color=${GOLD}@0.25:t=1[out]"
+
+    ffmpeg -y \
+        -f lavfi -i "color=c=black@0.0:s=1280x720" \
+        -loop 1 -i "$DOT_MARKER" \
+        -frames:v 1 \
+        -filter_complex "$CHAIN" \
+        -map "[out]" \
+        "$ASSET_DIR/static_hud.png" \
+        -loglevel error
+}
+
+#############################################
+# build_dynamic_chain: everything that must be
+# recomputed every frame because it depends on
+# `t`, live-reloaded text files, or a visibility
+# window. This is composited on top of the
+# baked static_hud.png (input index 1 in
+# run_video's ffmpeg call).
+#############################################
+build_dynamic_chain() {
+    local poll_start=$((POLL_CYCLE - POLL_WINDOW))
+    POLL_ENABLE="gte(mod(t+${VIDEO_START_OFFSET}\,${POLL_CYCLE})\,${poll_start})"
+
+    local CHAIN
+    CHAIN="[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,vignette=PI/6[base];"
+    CHAIN+="[base][1:v]overlay=0:0[hud];"
+
+    # Blinking LIVE dot, sitting on top of the static badge shell.
+    CHAIN+="[hud]drawbox=x=34:y=27:w=10:h=10:color=${RED}:t=fill:enable='lt(mod(t\,1)\,0.6)'[d1];"
+
+    # Live-reloaded stats stack (clock / subs / viewers), same
+    # coordinates the static credits line used as its anchor.
+    CHAIN+="[d1]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/clock.txt:reload=1:fontcolor=${GOLD}:fontsize=14:x=1260-text_w:y=39:${SHADOW}[d2];"
+    CHAIN+="[d2]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/subs.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=1260-text_w:y=57:${SHADOW}[d3];"
+    CHAIN+="[d3]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/viewers.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=1260-text_w:y=75:${SHADOW}[d4];"
+
+    # LIVE POLL reveal window — only visible for the final POLL_WINDOW
+    # seconds of each POLL_CYCLE; enable=false frames are cheap no-ops.
+    local PX=956 PW=284
+    CHAIN+="[d4]drawbox=x=${PX}:y=104:w=${PW}:h=8:color=${RED}:t=fill:enable='${POLL_ENABLE}'[pv1];"
+    CHAIN+="[pv1]drawtext=fontfile=${FONT}:text='LIVE POLL':fontcolor=${GOLD}:fontsize=14:x=$((PX + 16)):y=101:enable='${POLL_ENABLE}'[pv2];"
+    CHAIN+="[pv2]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_question.txt:reload=1:expansion=none:fontcolor=white:fontsize=16:line_spacing=6:x=${PX}:y=128:enable='${POLL_ENABLE}':${SHADOW}[pv3];"
+    CHAIN+="[pv3]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_opt1.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=13:x=${PX}:y=210:enable='${POLL_ENABLE}'[pv4];"
+    CHAIN+="[pv4]drawbox=x=${PX}:y=230:w=${PW}:h=14:color=black@0.35:t=fill:enable='${POLL_ENABLE}'[pv5];"
+    CHAIN+="[pv5]drawbox=x=${PX}:y=230:w=${PW}:h=14:color=${GOLD}@0.4:t=1:enable='${POLL_ENABLE}'[pv6];"
+    CHAIN+="[pv6]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar1.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=12:x=$((PX + 4)):y=231:enable='${POLL_ENABLE}'[pv7];"
+    CHAIN+="[pv7]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_opt2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=13:x=${PX}:y=258:enable='${POLL_ENABLE}'[pv8];"
+    CHAIN+="[pv8]drawbox=x=${PX}:y=278:w=${PW}:h=14:color=black@0.35:t=fill:enable='${POLL_ENABLE}'[pv9];"
+    CHAIN+="[pv9]drawbox=x=${PX}:y=278:w=${PW}:h=14:color=${GOLD}@0.4:t=1:enable='${POLL_ENABLE}'[pv10];"
+    CHAIN+="[pv10]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=12:x=$((PX + 4)):y=279:enable='${POLL_ENABLE}'[pv11];"
+    CHAIN+="[pv11]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_votes.txt:reload=1:expansion=none:fontcolor=${SILVER}@0.8:fontsize=10:x=${PX}:y=306:enable='${POLL_ENABLE}':${SHADOW}[pv12];"
+
+    # Periodic subscribe CTA — shell + text, both gated to CTA_SHOW
+    # seconds out of every CTA_CYCLE; enable=false frames are cheap.
+    local CTA_CYCLE=240
+    local CTA_SHOW=8
+    local CTA_ALPHA="if(between(mod(t\,${CTA_CYCLE})\,0\,${CTA_SHOW})\,if(lt(mod(t\,${CTA_CYCLE})\,0.6)\,mod(t\,${CTA_CYCLE})/0.6\,if(gt(mod(t\,${CTA_CYCLE})\,${CTA_SHOW}-0.6)\,(${CTA_SHOW}-mod(t\,${CTA_CYCLE}))/0.6\,1))\,0)"
+    local CTA_ENABLE="between(mod(t\,${CTA_CYCLE})\,0\,${CTA_SHOW})"
+
+    CHAIN+="[pv12]drawbox=x=729:y=616:w=515:h=51:color=${GOLD}@0.12:t=fill:enable='${CTA_ENABLE}'[cta_glow];"
+    CHAIN+="[cta_glow]drawbox=x=733:y=620:w=507:h=43:color=${NAVY}@0.85:t=fill:enable='${CTA_ENABLE}'[cta_bg];"
+    CHAIN+="[cta_bg]drawbox=x=733:y=620:w=507:h=43:color=${GOLD}@0.4:t=1:enable='${CTA_ENABLE}'[cta_outline];"
+    CHAIN+="[cta_outline]drawbox=x=733:y=620:w=4:h=43:color=${GOLD}:t=fill:enable='${CTA_ENABLE}'[cta_bar];"
+    CHAIN+="[cta_bar]drawbox=x=755:y=636:w=11:h=11:color=${RED}:t=fill:enable='${CTA_ENABLE}'[cta_dot];"
+    CHAIN+="[cta_dot]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/cta.txt:fontcolor=white:fontsize=19:x=773:y=633:alpha='${CTA_ALPHA}'[cta_final];"
+
+    # Scrolling ticker text + blinking ON AIR dot, both over the static
+    # ticker plate baked into static_hud.png.
+    CHAIN+="[cta_final]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/ticker.txt:fontcolor=white:fontsize=17:borderw=2:bordercolor=black@0.6:y=695:x='w-mod(t*${TICKER_SPEED}\,text_w+w)'[tk3];"
+    CHAIN+="[tk3]drawbox=x=17:y=690:w=8:h=8:color=${RED}:t=fill:enable='lt(mod(t\,1)\,0.6)'[final]"
+
+    DYNAMIC_CHAIN="$CHAIN"
+}
+
+#############################################
+# prepare_video_content: rebuilds the ticker
+# pool for this video, resolves the optional
+# category chip, bakes the static HUD PNG, and
+# builds the per-frame dynamic chain to match.
 #############################################
 prepare_video_content() {
     local url="$1"
@@ -623,27 +619,10 @@ prepare_video_content() {
     base="${url##*/}"
     base="${base%.*}"
 
-    # Segment counter globals are set by the main stream loop before
-    # calling run_video(); default them here too so this function stays
-    # safe to call standalone (e.g. future tooling/tests).
     : "${CURRENT_INDEX:=1}"
     : "${TOTAL_VIDEOS:=1}"
     : "${VIDEO_START_OFFSET:=0}"
 
-    # Poll panel is visible only for the final POLL_WINDOW seconds of
-    # every POLL_CYCLE-second cycle — a brief "results reveal" — with
-    # the info panel (headlines/facts) running the rest of the time.
-    # VIDEO_START_OFFSET (set by run_video()) shifts ffmpeg's own
-    # per-process `t` back onto real wall-clock time so this stays in
-    # sync across video boundaries.
-    local poll_start=$((POLL_CYCLE - POLL_WINDOW))
-    POLL_ENABLE="gte(mod(t+${VIDEO_START_OFFSET}\,${POLL_CYCLE})\,${poll_start})"
-    INFO_ENABLE="lt(mod(t+${VIDEO_START_OFFSET}\,${POLL_CYCLE})\,${poll_start})"
-
-    # Optional category chip (e.g. "HEISTS", "STORY MISSION") shown
-    # next to the LIVE badge when a <basename>.category.txt file exists
-    # for this video. Purely additive — if the file is missing or
-    # empty, no chip is drawn at all.
     SHOW_CATEGORY=false
     if [ -f "${base}.category.txt" ]; then
         CATEGORY_TEXT="$(head -n1 "${base}.category.txt" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -653,15 +632,7 @@ prepare_video_content() {
         fi
     fi
 
-    # FIX: same reasoning as build_labels_chain() above — this function
-    # is also called once per video from inside the outer stream loop
-    # (`for ((i = 0; i < NUM_URLS; i++))` at the bottom of this file),
-    # and it reuses bare `i`/`idx` in several for-loops below. Without
-    # `local`, those loops overwrite the outer loop's global `i`, which
-    # made the stream get stuck re-playing the first video forever
-    # instead of advancing through the playlist.
-    local i idx
-
+    local i
     RAW_LINES=()
     if [ -f "${base}.headlines.txt" ]; then
         echo "Using curated headlines: ${base}.headlines.txt"
@@ -691,157 +662,14 @@ prepare_video_content() {
     done
     printf '%s' "$TICKER_STRING" > "$ASSET_DIR/ticker.txt"
 
-    #########################################
-    # Rebuild BASE_CHAIN for this video's content
-    #########################################
-    # Gentle vignette on the raw footage gives the frame a cinematic
-    # broadcast depth instead of a flat, clinical rectangle — subtle
-    # enough not to darken the gameplay itself. (No overlay.png
-    # compositing step anymore — the scaled/padded gameplay frame IS
-    # the base plate the HUD draws on top of.)
-    CHAIN="[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,vignette=PI/6[base];"
+    echo "Baking static HUD for this video..."
+    render_static_hud "$url"
 
-    # Optional coordinate-based callout labels for this video, drawn onto
-    # the raw video before the HUD so the HUD stays on top.
-    build_labels_chain "$url"
-    CHAIN+="$LABELS_CHAIN"
-
-    #########################################
-    # Minimal gaming-style HUD — no sidebar, the
-    # gameplay stays fully visible. Just small
-    # corner badges, a bottom ticker, and a
-    # subscribe/CTA capsule, like a real stream
-    # overlay rather than a documentary panel.
-    #########################################
-
-    # LIVE badge, top-left: small capsule (pink outline + dark fill)
-    # behind the pulsing dot and label.
-    CHAIN+="${LABELS_OUT}drawbox=x=22:y=16:w=100:h=30:color=black@0.5:t=fill[h1];"
-    CHAIN+="[h1]drawbox=x=22:y=16:w=100:h=30:color=${GOLD}@0.55:t=1[h2];"
-    CHAIN+="[h2]drawbox=x=34:y=27:w=10:h=10:color=${RED}:t=fill:enable='lt(mod(t\,1)\,0.6)'[h3];"
-    CHAIN+="[h3]drawtext=fontfile=${FONT}:text='LIVE':fontcolor=white:fontsize=20:x=52:y=23[h4];"
-
-    local prev="h4"
-    if [ "$SHOW_CATEGORY" = true ]; then
-        local cat_w=$(( ${#CATEGORY_TEXT} * 8 + 24 ))
-        [ "$cat_w" -lt 70 ] && cat_w=70
-        [ "$cat_w" -gt 160 ] && cat_w=160
-        CHAIN+="[${prev}]drawbox=x=132:y=16:w=${cat_w}:h=30:color=${NAVY}@0.85:t=fill[catbg];"
-        CHAIN+="[catbg]drawbox=x=132:y=16:w=${cat_w}:h=30:color=${GOLD}@0.5:t=1[catout];"
-        CHAIN+="[catout]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/category.txt:fontcolor=${GOLD}:fontsize=13:x=$((132 + 12)):y=27[catxt];"
-        prev="catxt"
-    fi
-
-    # Small wordmark + tagline, tucked under the LIVE badge — a logo
-    # corner, not a wall of text.
-    CHAIN+="[${prev}]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/title1.txt:fontcolor=white:fontsize=20:x=22:y=58:${SHADOW}[h5];"
-    CHAIN+="[h5]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/eyebrow.txt:fontcolor=${GOLD}:fontsize=12:x=22:y=82:${SHADOW}[h6];"
-
-    # Stats stack, top-right corner: credits / clock / subs / viewers,
-    # right-aligned against the full 1280px frame (no panel edge to
-    # align against anymore).
-    CHAIN+="[h6]drawtext=fontfile=${FONT}:text='Credits\: Rockstar Games':fontcolor=${SILVER}@0.85:fontsize=14:x=1260-text_w:y=19:${SHADOW}[h7];"
-    CHAIN+="[h7]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/clock.txt:reload=1:fontcolor=${GOLD}:fontsize=14:x=1260-text_w:y=39:${SHADOW}[h8];"
-    CHAIN+="[h8]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/subs.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=1260-text_w:y=57:${SHADOW}[h9];"
-    CHAIN+="[h9]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/viewers.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=1260-text_w:y=75:${SHADOW}[h10];"
-
-    #########################################
-    # LIVE POLL — small corner card, top-right,
-    # below the stats stack. Only visible for the
-    # final POLL_WINDOW seconds of every
-    # POLL_CYCLE-second cycle (a brief "results
-    # reveal"). Nothing is drawn here the rest of
-    # the time — this replaces the old full-height
-    # sidebar poll panel with a compact widget that
-    # doesn't block the gameplay.
-    #########################################
-    local PX=956 PW=284
-    CHAIN+="[h10]drawbox=x=${PX}:y=104:w=${PW}:h=8:color=${RED}:t=fill:enable='${POLL_ENABLE}'[pv1];"
-    CHAIN+="[pv1]drawtext=fontfile=${FONT}:text='LIVE POLL':fontcolor=${GOLD}:fontsize=14:x=$((PX + 16)):y=101:enable='${POLL_ENABLE}'[pv2];"
-    CHAIN+="[pv2]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_question.txt:reload=1:expansion=none:fontcolor=white:fontsize=16:line_spacing=6:x=${PX}:y=128:enable='${POLL_ENABLE}':${SHADOW}[pv3];"
-
-    CHAIN+="[pv3]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_opt1.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=13:x=${PX}:y=210:enable='${POLL_ENABLE}'[pv4];"
-    CHAIN+="[pv4]drawbox=x=${PX}:y=230:w=${PW}:h=14:color=black@0.35:t=fill:enable='${POLL_ENABLE}'[pv5];"
-    CHAIN+="[pv5]drawbox=x=${PX}:y=230:w=${PW}:h=14:color=${GOLD}@0.4:t=1:enable='${POLL_ENABLE}'[pv6];"
-    CHAIN+="[pv6]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar1.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=12:x=$((PX + 4)):y=231:enable='${POLL_ENABLE}'[pv7];"
-
-    CHAIN+="[pv7]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_opt2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=13:x=${PX}:y=258:enable='${POLL_ENABLE}'[pv8];"
-    CHAIN+="[pv8]drawbox=x=${PX}:y=278:w=${PW}:h=14:color=black@0.35:t=fill:enable='${POLL_ENABLE}'[pv9];"
-    CHAIN+="[pv9]drawbox=x=${PX}:y=278:w=${PW}:h=14:color=${GOLD}@0.4:t=1:enable='${POLL_ENABLE}'[pv10];"
-    CHAIN+="[pv10]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=12:x=$((PX + 4)):y=279:enable='${POLL_ENABLE}'[pv11];"
-
-    CHAIN+="[pv11]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_votes.txt:reload=1:expansion=none:fontcolor=${SILVER}@0.8:fontsize=10:x=${PX}:y=306:enable='${POLL_ENABLE}':${SHADOW}[pv12];"
-
-    BASE_CHAIN="$CHAIN"
-    PANEL_END="pv12"
+    build_dynamic_chain
 }
 
 #############################################
-# build_final_filter: appends the CTA / ticker /
-# watermark / border section onto BASE_CHAIN.
-#############################################
-build_final_filter() {
-    local tail="$BASE_CHAIN"
-
-    # Periodic subscribe reminder capsule: pops in for CTA_SHOW seconds
-    # every CTA_CYCLE seconds, then disappears completely (no next-video
-    # countdown or "coming up next" text — there's no bumper anymore, so
-    # there's nothing to count down to). The whole capsule — background
-    # included — is gated on CTA_ENABLE so it isn't sitting on screen
-    # for the other 232 of every 240 seconds.
-    local CTA_CYCLE=240
-    local CTA_SHOW=8
-    local CTA_ALPHA="if(between(mod(t\,${CTA_CYCLE})\,0\,${CTA_SHOW})\,if(lt(mod(t\,${CTA_CYCLE})\,0.6)\,mod(t\,${CTA_CYCLE})/0.6\,if(gt(mod(t\,${CTA_CYCLE})\,${CTA_SHOW}-0.6)\,(${CTA_SHOW}-mod(t\,${CTA_CYCLE}))/0.6\,1))\,0)"
-    local CTA_ENABLE="between(mod(t\,${CTA_CYCLE})\,0\,${CTA_SHOW})"
-
-    tail+="[${PANEL_END}]drawbox=x=729:y=616:w=515:h=51:color=${GOLD}@0.12:t=fill:enable='${CTA_ENABLE}'[cta_glow];"
-    tail+="[cta_glow]drawbox=x=733:y=620:w=507:h=43:color=${NAVY}@0.85:t=fill:enable='${CTA_ENABLE}'[cta_bg];"
-    tail+="[cta_bg]drawbox=x=733:y=620:w=507:h=43:color=${GOLD}@0.4:t=1:enable='${CTA_ENABLE}'[cta_outline];"
-    tail+="[cta_outline]drawbox=x=733:y=620:w=4:h=43:color=${GOLD}:t=fill:enable='${CTA_ENABLE}'[cta_bar];"
-    tail+="[cta_bar]drawbox=x=755:y=636:w=11:h=11:color=${RED}:t=fill:enable='${CTA_ENABLE}'[cta_dot];"
-    tail+="[cta_dot]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/cta.txt:fontcolor=white:fontsize=19:x=773:y=633:alpha='${CTA_ALPHA}'[cta_final];"
-
-    # Bottom ticker: layered dark-purple plate (two steps for a soft top
-    # edge) with a slim pink hairline, and a refined "ON AIR" tag.
-    tail+="[cta_final]drawbox=x=0:y=678:w=1280:h=2:color=${GOLD}@0.35:t=fill[tk0];"
-    tail+="[tk0]drawbox=x=0:y=680:w=1280:h=40:color=${NAVY}@0.80:t=fill[tk1];"
-    tail+="[tk1]drawbox=x=0:y=680:w=1280:h=2:color=${GOLD}@0.9:t=fill[tk2];"
-    tail+="[tk2]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/ticker.txt:fontcolor=white:fontsize=17:borderw=2:bordercolor=black@0.6:y=695:x='w-mod(t*${TICKER_SPEED}\,text_w+w)'[tk3];"
-    tail+="[tk3]drawbox=x=0:y=680:w=124:h=40:color=${NAVY}@0.95:t=fill[tk4];"
-    tail+="[tk4]drawbox=x=0:y=682:w=117:h=1:color=${GOLD}@0.7:t=fill[tk4b];"
-    tail+="[tk4b]drawbox=x=113:y=682:w=2:h=36:color=${GOLD}@0.5:t=fill[tk5];"
-    tail+="[tk5]drawbox=x=17:y=690:w=8:h=8:color=${RED}:t=fill:enable='lt(mod(t\,1)\,0.6)'[tk5b];"
-    tail+="[tk5b]drawtext=fontfile=${FONT}:text='ON AIR':fontcolor=${GOLD}:fontsize=15:x=33:y=693[tk6];"
-
-    tail+="[tk6]drawtext=fontfile=${FONT}:text='${CHANNEL_NAME}':fontcolor=${SILVER}@0.5:fontsize=15:borderw=1.5:bordercolor=black@0.7:x=353:y=655[cf0];"
-
-    # Broadcast-style corner frame brackets (thin pink L-marks inset from
-    # each edge) — a classic "mission control" framing touch that reads
-    # as intentional composition rather than a raw video feed.
-    local CL=34   # bracket arm length
-    local CI=16   # inset from the frame edge
-    local CT=2    # bracket line thickness
-    tail+="[cf0]drawbox=x=${CI}:y=${CI}:w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf1];"
-    tail+="[cf1]drawbox=x=${CI}:y=${CI}:w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf2];"
-    tail+="[cf2]drawbox=x=$((1280 - CI - CL)):y=${CI}:w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf3];"
-    tail+="[cf3]drawbox=x=$((1280 - CI - CT)):y=${CI}:w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf4];"
-    tail+="[cf4]drawbox=x=${CI}:y=$((720 - CI - CT)):w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf5];"
-    tail+="[cf5]drawbox=x=${CI}:y=$((720 - CI - CL)):w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf6];"
-    tail+="[cf6]drawbox=x=$((1280 - CI - CL)):y=$((720 - CI - CT)):w=${CL}:h=${CT}:color=${GOLD}@0.5:t=fill[cf7];"
-    tail+="[cf7]drawbox=x=$((1280 - CI - CT)):y=$((720 - CI - CL)):w=${CT}:h=${CL}:color=${GOLD}@0.5:t=fill[cf8];"
-
-    # Sealed-frame finish: a hairline pink border reinforces the
-    # broadcast-package feel; the flat black vignette box is gone now
-    # that the actual footage carries a real vignette filter.
-    tail+="[cf8]drawbox=x=0:y=0:w=1280:h=720:color=${GOLD}@0.25:t=1[final]"
-
-    echo "$tail"
-}
-
-#############################################
-# Up-next bumper: short branded title card
-# streamed between videos to reduce drop-off
-# at the loop/transition point.
+# Up-next bumper — unchanged.
 #############################################
 run_bumper() {
     local next_url="$1"
@@ -897,6 +725,7 @@ run_bumper() {
     -loop 1 -t "$BUMPER_DURATION" -i overlay.png \
     -f lavfi -t "$BUMPER_DURATION" -i anullsrc=r=48000:cl=stereo \
     -filter_complex "$BFILTER" \
+    -filter_complex_threads 2 \
     -map "[final]" \
     -map 1:a \
     -r 24 \
@@ -923,41 +752,32 @@ run_bumper() {
 }
 
 #############################################
-# Stream one video with automatic retry on
-# failure/crash (e.g. Bus error, network drop),
-# instead of letting set -e kill the script.
+# run_video: streams one video with retry.
+#
+# Main ffmpeg call now only needs two inputs —
+# the source video and the pre-baked
+# static_hud.png — instead of three. overlay.png
+# is dropped entirely here: it was being decoded
+# every frame for no reason (nothing in the live
+# filter graph referenced it — the panel draws
+# directly onto the scaled/padded gameplay frame,
+# see prepare_video_content's comment history),
+# and its presence at input index 1 also meant
+# build_labels_chain's "[1:v]" reference was
+# quietly pulling in the wrong image instead of
+# the actual dot marker. Baking the dot marker
+# and labels into static_hud.png ahead of time
+# fixes both problems at once.
 #############################################
 run_video() {
     local url="$1"
     local attempt=1
 
-    # How far into the overall broadcast (not this video) we are right
-    # now, in seconds. prepare_video_content()'s poll/info enable
-    # expressions add this to ffmpeg's own `t` (which restarts at 0 for
-    # every video, since each one is a fresh ffmpeg process) so the
-    # panel switch follows real time across video boundaries instead of
-    # restarting its 10-minute cycle every time a new clip begins.
     VIDEO_START_OFFSET=$(( $(date +%s) - STREAM_START_EPOCH ))
 
-    # Load headlines/facts tied to this specific video (curated file if
-    # present, otherwise a freshly shuffled pool) and rebuild the panel
-    # filter chain to match.
     prepare_video_content "$url"
 
-    # Probe actual duration so the CTA box can show a real countdown to
-    # the next video. Falls back gracefully if probing fails.
-    local duration
-    duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$url" 2>/dev/null || echo "")
-    duration=${duration%.*}
-    [[ "$duration" =~ ^[0-9]+$ ]] || duration=""
-    if [ -n "$duration" ]; then
-        echo "Probed duration: ${duration}s"
-    else
-        echo "Could not probe duration — countdown will show generic filler text."
-    fi
-
-    local filter
-    filter=$(build_final_filter "$duration")
+    local filter="$DYNAMIC_CHAIN"
 
     while [ "$attempt" -le "$MAX_RETRIES" ]; do
         echo "----------------------------------------"
@@ -974,9 +794,9 @@ run_video() {
         -reconnect_delay_max 5 \
         -re \
         -i "$url" \
-        -loop 1 -i overlay.png \
-        -loop 1 -i "$DOT_MARKER" \
+        -loop 1 -i "$ASSET_DIR/static_hud.png" \
         -filter_complex "$filter" \
+        -filter_complex_threads 2 \
         -map "[final]" \
         -map 0:a? \
         -r 30 \
@@ -1037,9 +857,6 @@ if [ "$NUM_URLS" -eq 0 ]; then
     exit 1
 fi
 
-# Shuffle playback order fresh for every workflow run, so the sequence
-# of videos isn't identical every time the 5-hour cron restarts the
-# container. (Fisher-Yates via `shuf`, always available on Ubuntu.)
 if [ "$NUM_URLS" -gt 1 ]; then
     mapfile -t URLS < <(printf '%s\n' "${URLS[@]}" | shuf)
     echo "Shuffled playback order for this run:"
@@ -1054,8 +871,6 @@ while true; do
         next_idx=$(( (i + 1) % NUM_URLS ))
         next_url="${URLS[$next_idx]}"
 
-        # Read by prepare_video_content() to render the "STORY X OF Y"
-        # segment counter next to the progress bar.
         CURRENT_INDEX=$((i + 1))
         TOTAL_VIDEOS=$NUM_URLS
 
