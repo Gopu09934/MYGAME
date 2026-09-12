@@ -25,7 +25,7 @@ fi
 echo "========================================"
 echo "Starting 24/7 YouTube Stream (Vice City Gaming Overlay)"
 echo "Output Resolution : 1280x720 (720p — sized for a 2-core CI runner)"
-echo "FPS               : 30"
+echo "FPS               : 24"
 echo "========================================"
 
 FONT="font.ttf"
@@ -502,13 +502,10 @@ render_static_hud() {
     CHAIN+="[h5]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/eyebrow.txt:fontcolor=${GOLD}:fontsize=12:x=22:y=82:${SHADOW}[h6];"
     CHAIN+="[h6]drawtext=fontfile=${FONT}:text='Credits\: Rockstar Games':fontcolor=${SILVER}@0.85:fontsize=14:x=1260-text_w:y=19:${SHADOW}[h7];"
 
-    # CTA box shell — background/outline/bar only. Visibility toggles
-    # via enable=CTA_ENABLE, and the text fades via alpha=, both of
-    # which have to stay in the live chain since they depend on `t`.
-    # The shell itself is drawn here unconditionally, sitting invisible
-    # under nothing when the CTA is "off" is not an option — so the
-    # shell keeps its own enable gate too and lives in the dynamic
-    # chain instead. (See build_dynamic_chain.)
+    # (CTA subscribe reminder removed entirely from the live stream —
+    # see build_dynamic_chain — to keep the 2-core per-frame budget
+    # down. The "SUBSCRIBE" ask still lives passively in the eyebrow
+    # tagline baked above.)
 
     # Bottom ticker plate + left "ON AIR" tab shell (dot blink and
     # channel-name/scroll text stay dynamic).
@@ -557,17 +554,18 @@ build_dynamic_chain() {
     POLL_ENABLE="gte(mod(t+${VIDEO_START_OFFSET}\,${POLL_CYCLE})\,${poll_start})"
 
     local CHAIN
-    CHAIN="[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,vignette=PI/6[base];"
+    CHAIN="[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black[base];"
     CHAIN+="[base][1:v]overlay=0:0[hud];"
 
     # Blinking LIVE dot, sitting on top of the static badge shell.
     CHAIN+="[hud]drawbox=x=34:y=27:w=10:h=10:color=${RED}:t=fill:enable='lt(mod(t\,1)\,0.6)'[d1];"
 
-    # Live-reloaded stats stack (clock / subs / viewers), same
-    # coordinates the static credits line used as its anchor.
-    CHAIN+="[d1]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/clock.txt:reload=1:fontcolor=${GOLD}:fontsize=14:x=1260-text_w:y=39:${SHADOW}[d2];"
-    CHAIN+="[d2]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/subs.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=1260-text_w:y=57:${SHADOW}[d3];"
-    CHAIN+="[d3]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/viewers.txt:reload=1:fontcolor=${SILVER}@0.85:fontsize=13:x=1260-text_w:y=75:${SHADOW}[d4];"
+    # Stats stack trimmed to just the clock — subscriber/viewer counts
+    # are still written to panel_assets/subs.txt & viewers.txt by the
+    # background pollers (and logged to the Action's console output)
+    # but are no longer drawn into the video, to cut two more
+    # reload=1 drawtext ops off every frame.
+    CHAIN+="[d1]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/clock.txt:reload=1:fontcolor=${GOLD}:fontsize=14:x=1260-text_w:y=39:${SHADOW}[d4];"
 
     # LIVE POLL reveal window — only visible for the final POLL_WINDOW
     # seconds of each POLL_CYCLE; enable=false frames are cheap no-ops.
@@ -585,19 +583,11 @@ build_dynamic_chain() {
     CHAIN+="[pv10]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_bar2.txt:reload=1:expansion=none:fontcolor=${GOLD}:fontsize=12:x=$((PX + 4)):y=279:enable='${POLL_ENABLE}'[pv11];"
     CHAIN+="[pv11]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/poll_votes.txt:reload=1:expansion=none:fontcolor=${SILVER}@0.8:fontsize=10:x=${PX}:y=306:enable='${POLL_ENABLE}':${SHADOW}[pv12];"
 
-    # Periodic subscribe CTA — shell + text, both gated to CTA_SHOW
-    # seconds out of every CTA_CYCLE; enable=false frames are cheap.
-    local CTA_CYCLE=240
-    local CTA_SHOW=8
-    local CTA_ALPHA="if(between(mod(t\,${CTA_CYCLE})\,0\,${CTA_SHOW})\,if(lt(mod(t\,${CTA_CYCLE})\,0.6)\,mod(t\,${CTA_CYCLE})/0.6\,if(gt(mod(t\,${CTA_CYCLE})\,${CTA_SHOW}-0.6)\,(${CTA_SHOW}-mod(t\,${CTA_CYCLE}))/0.6\,1))\,0)"
-    local CTA_ENABLE="between(mod(t\,${CTA_CYCLE})\,0\,${CTA_SHOW})"
-
-    CHAIN+="[pv12]drawbox=x=729:y=616:w=515:h=51:color=${GOLD}@0.12:t=fill:enable='${CTA_ENABLE}'[cta_glow];"
-    CHAIN+="[cta_glow]drawbox=x=733:y=620:w=507:h=43:color=${NAVY}@0.85:t=fill:enable='${CTA_ENABLE}'[cta_bg];"
-    CHAIN+="[cta_bg]drawbox=x=733:y=620:w=507:h=43:color=${GOLD}@0.4:t=1:enable='${CTA_ENABLE}'[cta_outline];"
-    CHAIN+="[cta_outline]drawbox=x=733:y=620:w=4:h=43:color=${GOLD}:t=fill:enable='${CTA_ENABLE}'[cta_bar];"
-    CHAIN+="[cta_bar]drawbox=x=755:y=636:w=11:h=11:color=${RED}:t=fill:enable='${CTA_ENABLE}'[cta_dot];"
-    CHAIN+="[cta_dot]drawtext=fontfile=${FONT}:textfile=${ASSET_DIR}/cta.txt:fontcolor=white:fontsize=19:x=773:y=633:alpha='${CTA_ALPHA}'[cta_final];"
+    # CTA subscribe reminder removed from the live filter chain per the
+    # 2-core budget — it was 6 extra draw ops every single frame just
+    # to appear for 8s out of every 240s. The wordmark/eyebrow baked
+    # into static_hud.png still carries the "SUBSCRIBE" ask passively.
+    CHAIN+="[pv12]null[cta_final];"
 
     # Scrolling ticker text + blinking ON AIR dot, both over the static
     # ticker plate baked into static_hud.png.
@@ -794,25 +784,25 @@ run_video() {
         -reconnect_delay_max 5 \
         -re \
         -i "$url" \
-        -loop 1 -framerate 30 -i "$ASSET_DIR/static_hud.png" \
+        -loop 1 -framerate 24 -i "$ASSET_DIR/static_hud.png" \
         -filter_complex "$filter" \
         -filter_complex_threads 2 \
         -map "[final]" \
         -map 0:a? \
-        -r 30 \
+        -r 24 \
         -s 1280x720 \
         -c:v libx264 \
         -preset ultrafast \
         -tune zerolatency \
         -threads 2 \
-        -profile:v high \
-        -level 4.1 \
+        -profile:v baseline \
+        -level 3.1 \
         -pix_fmt yuv420p \
-        -b:v 3000k \
-        -maxrate 3000k \
-        -bufsize 6000k \
-        -g 60 \
-        -keyint_min 60 \
+        -b:v 2500k \
+        -maxrate 2500k \
+        -bufsize 5000k \
+        -g 48 \
+        -keyint_min 48 \
         -sc_threshold 0 \
         -c:a aac \
         -b:a 128k \
